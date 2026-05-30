@@ -140,6 +140,7 @@ Demo sẽ tự mở trình duyệt tại `http://localhost:8501` với 2 tab:
 
 ### NBFO
 - Mô hình XGBoost đạt **PR-AUC 0.598** trên tập test (month 10), phù hợp với bài toán highly imbalanced
+- Đánh giá recommendation **Hit@K, NDCG@K trên 0.9**, **lift%20 đạt 4x**
 - Propensity score đã được calibrate bằng Platt Scaling, sẵn sàng cho downstream tasks
 - SHAP cho thấy các features quan trọng nhất: product affinity, deposit balance, activity frequency
 
