@@ -1,4 +1,4 @@
 model,role,path,mean_cv_average_precision
-lightgbm,loaded_saved_candidate,c:\Users\Admin\Desktop\gcon\NBFO_IB\saved_models\lightgbm_best_model.joblib,0.597997
-xgboost,loaded_saved_candidate,c:\Users\Admin\Desktop\gcon\NBFO_IB\saved_models\xgboost_best_model.joblib,0.598065
-xgboost_calibrated_sigmoid,selected_calibrated_model,c:\Users\Admin\Desktop\gcon\NBFO_IB\saved_models\selected_xgboost_calibrated_sigmoid_model.joblib,0.598065
+lightgbm,loaded_saved_candidate,NBFO_IB/saved_models/lightgbm_best_model.joblib,0.597997
+xgboost,loaded_saved_candidate,NBFO_IB/saved_models/xgboost_best_model.joblib,0.598065
+xgboost_calibrated_sigmoid,selected_calibrated_model,NBFO_IB/saved_models/selected_xgboost_calibrated_sigmoid_model.joblib,0.598065

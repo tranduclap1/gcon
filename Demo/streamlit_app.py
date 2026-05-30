@@ -192,7 +192,8 @@ def load_nbfo_data():
 
     scores = score_frames[0]
     for frame in score_frames[1:]:
-        scores = scores.merge(frame[ID_COLS + [score_col]], on=ID_COLS, how="left", validate="one_to_one")
+        merge_cols = [c for c in frame.columns if c not in ID_COLS and c != TARGET_COL]
+        scores = scores.merge(frame[ID_COLS + merge_cols], on=ID_COLS, how="left", validate="one_to_one")
 
     snapshot_cols = [
         *ID_COLS,
@@ -443,7 +444,7 @@ def render_customer_snapshot(row, mode):
 
         profile = pd.DataFrame(
             [
-                ("Customer number", row["CUSTOMER_NUMBER"]),
+                ("Customer number", str(row["CUSTOMER_NUMBER"])),
                 ("Month", pd.to_datetime(row["MONTH"]).strftime("%Y-%m")),
                 ("Age", format_number(first_existing(row, ["AGE_CLEAN", "AGE"], np.nan))),
                 ("Customer tenure months", format_number(first_existing(row, ["CUSTOMER_TENURE_MONTHS"], np.nan))),
@@ -465,10 +466,10 @@ def render_customer_snapshot(row, mode):
 
         profile = pd.DataFrame(
             [
-                ("Customer number", row["CUSTOMER_NUMBER"]),
+                ("Customer number", str(row["CUSTOMER_NUMBER"])),
                 ("Persona", display_persona_name(row)),
-                ("Age group", first_existing(row, ["AGE_GROUP"], "-")),
-                ("Sex", first_existing(row, ["CLIENT_SEX"], "-")),
+                ("Age group", str(first_existing(row, ["AGE_GROUP"], "-"))),
+                ("Sex", str(first_existing(row, ["CLIENT_SEX"], "-"))),
                 ("Tenure days", format_number(first_existing(row, ["TENURE_DAYS"], np.nan))),
                 ("Dormant", "Yes" if int(first_existing(row, ["IS_DORMANT"], 0)) == 1 else "No"),
             ],
