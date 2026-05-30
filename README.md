@@ -153,10 +153,11 @@ Demo sẽ tự mở trình duyệt tại `http://localhost:8501` với 2 tab:
 
 ## Thành viên nhóm
 
-| Thành viên 
-| Nguyễn Tiến Mạnh
-| Phạm Văn Linh
-| Trần Đức Lập
+| Thành viên | Vai trò |
+|---|---|
+| Nguyễn Tiến Mạnh | Leader | 
+| Phạm Văn Linh | Member |
+| Trần Đức Lập | Member |
 
 ---
 
