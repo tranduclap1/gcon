@@ -16,3 +16,11 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Large Files & Outputs
+*.csv
+*.parquet
+*.pdf
+*.zip
+*.tar.gz
+*.pkl
