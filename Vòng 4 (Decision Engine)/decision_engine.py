@@ -30,17 +30,21 @@ try:
     df_nonib.rename(columns={'PERSONA_NAME': 'PERSONA'}, inplace=True)
     
     # Unsupervised-to-Supervised Proxy logic for Non-IB
+    # Using REAL Historical Onboarding Rates calculated from Cohort Tracking
     base_cr_nonib = {
-        'Senior High-Value Saver': 0.05,
-        'Traditional': 0.01,
-        'Young Active': 0.08,
-        'Digital Native': 0.06
+        'Senior High-Value Heavy Borrower': 0.9183,
+        'High-Value Heavy Borrower': 0.9144,
+        'High-Value Traditional': 0.7803,
+        'Dormant / Ngủ đông': 0.4018,
+        'Senior High-Value Saver': 0.1802,
+        'High-Value Saver': 0.1562,
+        'Traditional': 0.1068
     }
-    # Map, default to 0.02
-    df_nonib['PROBABILITY'] = df_nonib['PERSONA'].map(base_cr_nonib).fillna(0.02)
-    # Add GMM posterior simulation (variation) to make it unique per customer
+    # Map probabilities
+    df_nonib['PROBABILITY'] = df_nonib['PERSONA'].map(base_cr_nonib).fillna(0.10)
+    # Add minor GMM posterior simulation (variation) to make it unique per customer (prevent ties)
     np.random.seed(42)
-    df_nonib['PROBABILITY'] *= np.random.uniform(0.8, 1.2, len(df_nonib))
+    df_nonib['PROBABILITY'] *= np.random.uniform(0.9, 1.1, len(df_nonib))
     df_nonib['RECOMMENDED_PRODUCT'] = 'Digital Onboarding'
     
     # Combine
@@ -52,10 +56,22 @@ except Exception as e:
 
 print("Master data shape:", df_master.shape)
 
-# Unit Economics
-TP = 5_000_000
-FP = -50_000
-FN_VIP = -30_000_000
+# Unique Financial Utility Matrix (FUM) for each Persona
+fum_matrix = {
+    'Wealthy Passive': {'TP': 5_000_000, 'FP': -50_000, 'FN': -30_000_000},
+    'Digital VIP':     {'TP': 5_000_000, 'FP': -80_000, 'FN': -20_000_000},
+    'Mass Active':     {'TP': 5_000_000, 'FP': -20_000, 'FN': 0},
+    'Young Digital':   {'TP': 5_000_000, 'FP': -100_000, 'FN': 0},
+    'Standard':        {'TP': 5_000_000, 'FP': -40_000, 'FN': 0},
+    
+    'Senior High-Value Saver':          {'TP': 1_000_000, 'FP': -10_000, 'FN': -5_000_000},
+    'Traditional':                      {'TP': 1_000_000, 'FP': -5_000,  'FN': 0},
+    'Dormant / Ngủ đông':               {'TP': 1_000_000, 'FP': -2_000,  'FN': 0},
+    'High-Value Saver':                 {'TP': 1_000_000, 'FP': -15_000, 'FN': -1_000_000},
+    'High-Value Heavy Borrower':        {'TP': 1_000_000, 'FP': -15_000, 'FN': -2_000_000},
+    'Senior High-Value Heavy Borrower': {'TP': 1_000_000, 'FP': -10_000, 'FN': -4_000_000},
+    'High-Value Traditional':           {'TP': 1_000_000, 'FP': -8_000,  'FN': -500_000},
+}
 
 channels = {
     'SMS': {'cost': 5_000, 'cr': 0.02},
@@ -64,8 +80,13 @@ channels = {
 }
 
 # Identify VIPs
-vip_personas = ['Wealthy Passive', 'Digital VIP', 'Senior High-Value Saver']
+vip_personas = ['Wealthy Passive', 'Digital VIP', 'Senior High-Value Saver', 'Senior High-Value Heavy Borrower']
 df_master['IS_VIP'] = df_master['PERSONA'].isin(vip_personas)
+
+# Map Unit Economics from FUM
+df_master['TP'] = df_master['PERSONA'].map(lambda x: fum_matrix.get(x, fum_matrix['Standard'])['TP'])
+df_master['FP'] = df_master['PERSONA'].map(lambda x: fum_matrix.get(x, fum_matrix['Standard'])['FP'])
+df_master['FN'] = df_master['PERSONA'].map(lambda x: fum_matrix.get(x, fum_matrix['Standard'])['FN'])
 
 # TIE BREAKER: Asset Proxy (simulated from customer ID for stable ranking)
 df_master['ASSET_SCORE'] = (df_master['CUSTOMER_NUMBER'] % 10000) / 10000.0
@@ -73,21 +94,20 @@ df_master['ASSET_SCORE'] = (df_master['CUSTOMER_NUMBER'] % 10000) / 10000.0
 def calculate_emu(df, fp_multiplier=1.0, cr_multiplier=1.0):
     P_base = df['PROBABILITY']
     
-    # UPLIFT MODELING: P_final = P_base + Uplift
-    # Persuadable Curve: Uplift is max at P=0.5, 0 at P=0 and P=1
-    # Uplift(P) = 4 * P * (1-P) * CR_channel
+    # UPLIFT MODELING
     uplift_sms = 4 * P_base * (1 - P_base) * channels['SMS']['cr'] * cr_multiplier
     uplift_tele = 4 * P_base * (1 - P_base) * channels['Telesales']['cr'] * cr_multiplier
     uplift_rm = 4 * P_base * (1 - P_base) * channels['RM']['cr'] * cr_multiplier
     
-    # Dynamic FN (Only VIPs suffer -30M if we miss uplifting them)
-    fn_array = np.where(df['IS_VIP'], FN_VIP, 0)
-    fp_array = np.where(df['IS_VIP'], FP * fp_multiplier, FP)
+    # FUM Parameters
+    tp_array = df['TP']
+    fn_array = df['FN']
+    fp_array = df['FP'] * fp_multiplier
     
     # EMU = Uplift * (TP - FN) + (1 - P_base - Uplift) * FP - Cost
-    emu_sms = uplift_sms * (TP - fn_array) + (1 - P_base - uplift_sms) * fp_array - channels['SMS']['cost']
-    emu_tele = uplift_tele * (TP - fn_array) + (1 - P_base - uplift_tele) * fp_array - channels['Telesales']['cost']
-    emu_rm = uplift_rm * (TP - fn_array) + (1 - P_base - uplift_rm) * fp_array - channels['RM']['cost']
+    emu_sms = uplift_sms * (tp_array - fn_array) + (1 - P_base - uplift_sms) * fp_array - channels['SMS']['cost']
+    emu_tele = uplift_tele * (tp_array - fn_array) + (1 - P_base - uplift_tele) * fp_array - channels['Telesales']['cost']
+    emu_rm = uplift_rm * (tp_array - fn_array) + (1 - P_base - uplift_rm) * fp_array - channels['RM']['cost']
     
     # RM is only for VIPs
     emu_rm = np.where(df['IS_VIP'], emu_rm, -999_999_999)

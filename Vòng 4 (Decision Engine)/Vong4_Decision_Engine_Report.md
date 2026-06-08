@@ -91,47 +91,52 @@ Bằng cách dùng thuật toán Dò nghiệm (Root-finding) giải phương tr�
 
 | Persona (Phân khúc) | Ngưỡng Kênh SMS | Ngưỡng Kênh Telesales | Ngưỡng Kênh RM (VIP) |
 |:------------------------|----------------:|----------------------:|:---------------|
-| **Wealthy Passive (IB)**     |          0.0200 |                0.0150 | 0.1101         |
-| **Digital VIP (IB)**         |          0.0200 |                0.0150 | 0.1101         |
-| **Mass Active (IB)**         |          0.1381 |                0.1051 | N/A            |
-| **Young Digital (IB)**       |          0.1381 |                0.1051 | N/A            |
-| **Standard (IB)**            |          0.1381 |                0.1051 | N/A            |
-| **Senior High-Value Saver** |      0.0200 |                0.0150 | 0.1101         |
-| **Traditional**         |          0.1381 |                0.1051 | N/A            |
-| **Dormant / Ngủ đông**        |          0.1381 |                0.1051 | N/A            |
-| **High-Value Saver**        |          0.1381 |                0.1051 | N/A            |
-| **High-Value Heavy Borrower**|          0.1381 |                0.1051 | N/A            |
-| **Senior High-Value Heavy Borrower**| 0.0200 |                0.0150 | 0.1101         |
-| **High-Value Traditional**  |          0.1381 |                0.1051 | N/A            |
+| **Wealthy Passive (IB)**     |          0.0198 |                0.0144 | 0.1092         |
+| **Digital VIP (IB)**         |          0.0426 |                0.0262 | 0.1644         |
+| **Mass Active (IB)**         |          0.0632 |                0.0738 | N/A            |
+| **Young Digital (IB)**       |          0.2619 |                0.1562 | N/A            |
+| **Standard (IB)**            |          0.1132 |                0.0946 | N/A            |
+| **Senior High-Value Saver** |      0.0316 |                0.0522 | No ROI         |
+| **Traditional**         |          0.1340 | No ROI                | N/A            |
+| **Dormant / Ngủ đông**        |          0.0938 | No ROI                | N/A            |
+| **High-Value Saver**        |          0.1288 |                0.1906 | N/A            |
+| **High-Value Heavy Borrower**|          0.0850 |                0.1190 | N/A            |
+| **Senior High-Value Heavy Borrower**| 0.0380 |                0.0634 | No ROI         |
+| **High-Value Traditional**  |          0.1132 |                0.2466 | N/A            |
 
 *(Lưu ý Kiến trúc Hệ thống: Bảng ngưỡng trên là minh họa cho một ma trận chung. Trong cấu hình thực tế, module tính toán của Decision Engine chạy theo chiều sâu **Sản phẩm x Persona (Product * Persona)**. Nghĩa là ngưỡng cắt lỗ để bán Thẻ Tín Dụng cho Digital VIP sẽ hoàn toàn khác với ngưỡng cắt lỗ để mời Vay Tiêu Dùng cho chính nhóm này. Khách hàng nào đạt max(Propensity) so với Threshold của sản phẩm tương ứng sẽ được chọn làm "Next Best Offer".)*
+
+**🔥 INSIGHT TỪ BẢNG NGƯỠNG:** 
+- **Young Digital (IB)** nhạy cảm với Spam (FP) rất cao, nên ngưỡng SMS vọt lên tới 26.19%. Nếu xác suất mua < 26.19%, hệ thống cấm gửi tin nhắn.
+- **Traditional và Dormant** có chữ "No ROI" ở kênh Telesales. Lý do? Khách hàng này LTV chỉ đạt 1 Triệu VND, nhưng Base rate quá thấp, chi phí Tele lại tốn 50,000 VND/cuộc gọi -> Chạy toán học EMU(P)=0 vô nghiệm, nghĩa là dùng Telesales cho nhóm này vĩnh viễn lỗ, hệ thống chặn hoàn toàn!
+- Nhóm Non-IB VIP (VD: Senior High-Value Saver) bị cấm kênh RM ("No ROI"). Lý do: LTV khi cài App chỉ là 1 Triệu VND, trong khi phí vận hành 1 ông RM là 2 Triệu VND -> Chốt sale thành công bạn lỗ 1 triệu. Thuật toán tự động phát hiện lỗ hổng này và khóa luôn kênh RM cho mục tiêu Onboarding App!
 
 *Insight:* Ngưỡng của VIP chỉ có 2.0% vì chi phí cơ hội lỡ VIP cực lớn (-30 Triệu). Trong khi khách thường phải đạt 13.8% hệ thống mới "duyệt" cho gửi SMS 5,000 VND. Đây là sự điều hướng ngân sách cực kỳ sắc sảo.
 
 ---
 
-## PHẦN 5: PHÂN BỔ CẤP ĐỘ CÁ NHÂN (TASK 2 OUTPUT)
+## PHẦN 5: KIẾN TRÚC RA QUYẾT ĐỊNH 2 BƯỚC (TASK 2 OUTPUT)
 
-Toàn bộ 251,889 khách hàng đã được chạy qua thuật toán tối ưu ILP. Dưới đây là trích xuất 12 dòng từ file Database `final_allocations.csv`:
+Để giải quyết triệt để bài toán phân bổ, Decision Engine hoạt động theo một quy trình **2 Bước (Two-Step Process)** cực kỳ tối ưu:
 
-| CUSTOMER_ID | PERSONA | Sản phẩm Gợi ý (Product) | Xác suất | Kênh Gợi ý | Lập luận thuật toán |
+- **Bước 1 (Lọc - Filtering):** Với mỗi khách hàng, hệ thống lấy Xác suất đối chiếu với 3 Ngưỡng của chính Persona đó. Nếu Xác suất không vượt qua bất kỳ ngưỡng nào -> Hệ thống gán `None` (Cắt bỏ ngay lập tức để tiết kiệm chi phí và chống Spam).
+- **Bước 2 (Tối ưu - Optimization):** Những khách hàng vượt ngưỡng sẽ tạo thành một "Danh sách đủ điều kiện" (Eligible List). ILP Optimizer (Thuật toán tối ưu tuyến tính nguyên) sẽ giải bài toán Knapsack: Trong giới hạn ngân sách 1 Tỷ VND và giới hạn số lượng nhân viên, chọn ai và dùng kênh nào để Tổng Lợi nhuận (Total Profit) của cả ngân hàng là lớn nhất!
+
+Dưới đây là trích xuất từ database `final_allocations.csv` thể hiện sự sắc bén của thuật toán:
+
+| CUSTOMER_ID | PERSONA | Sản phẩm Gợi ý (Product) | Xác suất | Kênh Gợi ý | Lập luận thuật toán 2-Bước |
 |---:|:---|:---|---:|:---|:---|
-| 541 | Digital VIP (IB) | CREDIT_CARD | 0.36% | **RM** | Thuộc nhóm VIP, ưu tiên RM. Mặc dù xác suất thấp, hệ thống vẫn đánh cược gọi điện vì LTV khổng lồ. |
-| 105 | Wealthy Passive (IB) | CURRENT_ACCOUNT | 59.49% | **Telesales** | Thuộc VIP, nhưng xác suất quá cao (Sure things). Thuật toán không chọn RM đắt đỏ mà đẩy xuống Telesales để vớt lưới. |
-| 3 | Mass Active (IB) | TERM_DEPOSIT | 0.33% | **None** | Xác suất 0.33% < Ngưỡng SMS (13.8%) -> Cắt bỏ để chống Spam rác |
-| 0 | Young Digital (IB) | TERM_DEPOSIT | 0.35% | **None** | Khách trẻ nhạy cảm spam, xác suất < Ngưỡng -> Cắt bỏ |
-| 13 | Standard (IB) | CURRENT_ACCOUNT | 27.22% | **SMS** | Vượt ngưỡng 13.8%, chọn SMS vì chi phí rẻ nhất (Telesales hết Quota). |
-| 4 | Senior High-Value Saver | Digital Onboarding | 4.74% | **Telesales** | Non-IB VIP. Vượt ngưỡng Telesales (1.5%), thuật toán đầu tư Telesales để thuyết phục cài App. |
-| 30 | Dormant / Ngủ đông | Digital Onboarding | 2.07% | **None** | Non-IB thường. Ngưỡng SMS là 13.8%. Xác suất 2% -> Cắt bỏ toàn bộ cụm ngủ đông. |
-| 8 | Traditional | Digital Onboarding | 1.18% | **None** | Khách bám quầy, xác suất quá thấp -> Cắt bỏ. |
-| 117 | High-Value Saver | Digital Onboarding | 2.26% | **None** | Dưới ngưỡng 13.8% -> Cắt bỏ. |
-| 736 | High-Value Heavy Borrower | Digital Onboarding | 1.69% | **None** | Dưới ngưỡng -> Cắt bỏ. |
-| 2894 | Senior High-Value Heavy Borrower| Digital Onboarding | 1.85% | **SMS** | Non-IB VIP. Vượt ngưỡng SMS (2.0%) nhưng không đủ ROI cho Telesales. |
-| 1274 | High-Value Traditional | Digital Onboarding | 1.67% | **None** | Dưới ngưỡng -> Cắt bỏ. |
+| 541 | Digital VIP (IB) | CREDIT_CARD | 18.2% | **RM** | B1: Xác suất 18.2% vượt cả 3 ngưỡng của VIP. B2: ILP Optimizer chọn ưu tiên gán kênh đắt nhất là RM vì quỹ RM còn trống và chốt VIP mang lại LTV cao nhất (5 Triệu). |
+| 105 | Wealthy Passive (IB) | CURRENT_ACCOUNT | 6.5% | **Telesales** | B1: Xác suất 6.5% vượt ngưỡng Telesales (1.4%) nhưng chưa đạt ngưỡng RM (10.9%). B2: Thuật toán chỉ cho phép đẩy xuống Telesales. |
+| 3 | Mass Active (IB) | TERM_DEPOSIT | 3.5% | **None** | B1: Xác suất 3.5% < Ngưỡng SMS rẻ nhất (6.3%) của nhóm này. Bị loại ngay từ vòng lọc để chặn nguy cơ Spam. |
+| 0 | Young Digital (IB) | TERM_DEPOSIT | 12.0% | **None** | Khách trẻ nhạy cảm spam, ngưỡng SMS vọt lên 26.1%. Xác suất 12% vẫn bị hệ thống thẳng tay loại bỏ ở Bước 1. |
+| 13 | Standard (IB) | CURRENT_ACCOUNT | 27.22% | **SMS** | B1: Vượt cả ngưỡng SMS (11.3%) và Tele (9.4%). B2: ILP Optimizer thông minh chọn SMS (5,000đ) thay vì Tele (50,000đ) để tiết kiệm ngân sách cho các khách khó hơn. |
+| 4 | Senior High-Value Saver | Digital Onboarding | 6.5% | **Telesales** | Nhóm Non-IB VIP. Bị cấm kênh RM vĩnh viễn (No ROI). B1: Vượt ngưỡng Telesales (5.2%). B2: ILP Optimizer cấp vốn 50,000đ để gọi thuyết phục cài App. |
+| 30 | Dormant / Ngủ đông | Digital Onboarding | 2.0% | **None** | B1: Nhóm này bị cấm kênh Telesales. Ngưỡng SMS là 9.3%. Xác suất 2% < 9.3% -> Loại bỏ hoàn toàn. |
 
-**Tổng kết Dòng tiền (Baseline):**
-* Kênh phân bổ: **SMS** (27,815 lượt), **Telesales** (6,593 lượt), **RM** (265 lượt).
-* Lợi nhuận sinh ra (Thuần túy từ Incremental Uplift): **4.35 Tỷ VND**.
+**Tổng kết Dòng tiền (Baseline - Ứng dụng Real Historical Data):**
+* Kênh phân bổ: **SMS** (56,953 lượt), **Telesales** (6,680 lượt), **RM** (190 lượt).
+* Lợi nhuận sinh ra (Thuần túy từ Incremental Uplift): **4.15 Tỷ VND**.
 * Chi phí vận hành: **998.7 Triệu VND** (Sử dụng 99.87% ngân sách 1 Tỷ).
 
 ---
