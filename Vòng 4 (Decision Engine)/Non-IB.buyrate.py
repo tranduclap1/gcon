@@ -1,4 +1,4 @@
-Th"""
+"""
 G'CONTEST 2026 — BA QUẢ TÁO
 Non-IB Buy Rate Estimation — Hướng 1: IB Segment Proxy
 Dual-method: Rule-based + Euclidean Distance (conservative tie-breaking)
