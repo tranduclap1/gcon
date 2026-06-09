@@ -38,6 +38,13 @@ gcon/
 ├── Demo/
 │   └── streamlit_app.py            # Interactive demo dashboard
 │
+├── Vòng 4 (Decision Engine)/
+│   ├── decision_engine.py          # Core ILP Optimization & Uplift
+│   ├── calculate_thresholds.py     # Root-finding algorithm cho Multi-threshold
+│   ├── generate_heatmap.py         # Chạy kịch bản Sensitivity Analysis (16 grids)
+│   ├── cluster_ib.py               # Chạy GMM Clustering cho nhóm IB
+│   └── Vong4_Decision_Engine_Report.md # Báo cáo Enterprise Whitepaper (Pitch deck source)
+│
 ├── requirements.txt                # Python dependencies
 └── README.md
 ```
@@ -82,7 +89,18 @@ gcon/
 | **Clustering** | Gaussian Mixture Model (GMM), k=8 |
 | **Evaluation** | Silhouette Score = 0.696, Bootstrap ARI = 0.962 |
 | **Validation** | Kruskal-Wallis test — tất cả features khác biệt có ý nghĩa thống kê |
-| **Output** | 8 personas + 1 nhóm Dormant, kèm campaign suggestion |
+| **Output** | 7 personas rõ rệt (Trích xuất từ dữ liệu thực tế), kèm chiến lược Onboarding |
+
+### Hướng 3: Decision Engine (Vòng Chung Kết)
+
+| Bước | Chi tiết |
+|---|---|
+| **Mục tiêu** | Tối ưu hóa phân bổ kênh Marketing (SMS, Telesales, RM) dưới ràng buộc ngân sách 1 Tỷ VND |
+| **Logic Toán học** | Chuyển dịch từ Propensity sang **Uplift Modeling** ($Uplift = 4 \times P \times (1-P) \times CR$) để tối đa hóa Lợi ích biên kỳ vọng (EMU). |
+| **Xác định Ngưỡng** | Dùng thuật toán dò nghiệm giải phương trình $EMU(P) = 0$ để chốt điểm cắt lỗ cho từng Kênh x Persona. |
+| **Tối ưu hóa** | Thuật toán Greedy/ILP kết hợp Tie-breaker (Asset Proxy) để chống bốc Random nhóm Non-IB. |
+| **Constraint** | Sunk Cost Lower Bound (Cấm hạ RM < 100 lượt) để bảo vệ bộ máy vận hành. |
+| **Sensitivity** | Chạy mô phỏng Ma trận Nhiệt 4x4 để tìm Nghịch lý Lợi nhuận (Chuyển đổi RM sang Telesales). |
 
 ---
 
@@ -113,6 +131,10 @@ pip install -r requirements.txt
 6. Cluster_nonIB/02_nonib_eda.ipynb          # EDA non-IB
 7. Cluster_nonIB/03_nonib_clustering.ipynb   # Clustering → output/
 8. Cluster_nonIB/04_nonib_cluster_profiling.ipynb  # Profiling → output/
+9. cluster_ib.py                             # GMM Clustering cho IB (Chuẩn bị Vòng 4)
+10. calculate_thresholds.py                  # Khởi chạy tính Threshold Vòng 4
+11. decision_engine.py                       # Chạy luồng phân bổ tối ưu -> final_allocations.csv
+12. generate_heatmap.py                      # Chạy mô phỏng độ nhạy
 ```
 
 ### Chạy Demo
@@ -145,10 +167,14 @@ Demo sẽ tự mở trình duyệt tại `http://localhost:8501` với 2 tab:
 - SHAP cho thấy các features quan trọng nhất: product affinity, deposit balance, activity frequency
 
 ### Clustering
-- 8 personas rõ ràng từ "Traditional" (63%) đến "High-Value Heavy Borrower" (0.5%)
-- Silhouette Score **0.696** — phân tách tốt giữa các cụm
-- Bootstrap ARI **0.962** — cluster rất ổn định qua các lần sampling
-- Mỗi persona kèm chiến lược tiếp cận cụ thể (kênh, thông điệp, hành động đầu tiên)
+- 7 personas rõ ràng từ "Traditional" đến "High-Value Heavy Borrower" cho nhóm Non-IB.
+- Silhouette Score **0.696** — phân tách tốt giữa các cụm.
+- Bootstrap ARI **0.962** — cluster rất ổn định qua các lần sampling.
+
+### Decision Engine (Vòng 4)
+- **Tối ưu Dòng tiền:** Đạt **4.35 Tỷ VND** Lợi nhuận thuần (tính riêng từ tác động Incremental) chỉ với 998.7 Triệu VND chi phí.
+- **Auto-Brake:** Tìm chính xác 12 Vector Ngưỡng (Thresholds) loại bỏ triệt để chi phí rác.
+- **Stress-Test & Sunk Cost:** Hệ thống duy trì lợi nhuận 3.91 Tỷ trong bối cảnh khủng hoảng (CR giảm, rủi ro phạt VIP tăng), tự động cân bằng kênh RM giữ mốc vận hành an toàn >100 lượt.
 
 ---
 
