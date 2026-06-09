@@ -1,9 +1,17 @@
 import pandas as pd
 import numpy as np
-from scipy.optimize import fsolve
 import os
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+def frame_to_markdown(df):
+    rows = [[str(col) for col in df.columns]]
+    rows.extend(df.fillna('').astype(str).values.tolist())
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    header = '| ' + ' | '.join(rows[0][i].ljust(widths[i]) for i in range(len(widths))) + ' |'
+    separator = '| ' + ' | '.join('-' * widths[i] for i in range(len(widths))) + ' |'
+    body = ['| ' + ' | '.join(row[i].ljust(widths[i]) for i in range(len(widths))) + ' |' for row in rows[1:]]
+    return '\n'.join([header, separator] + body)
 
 channels = {
     'SMS': {'cost': 5_000, 'cr': 0.02},
@@ -21,22 +29,22 @@ fum_matrix = {
     'Standard':        {'TP': 5_000_000, 'FP': -40_000, 'FN': 0},
     
     # Non-IB Personas (Onboarding: TP ~ 1M)
-    'Senior High-Value Saver':          {'TP': 1_000_000, 'FP': -10_000, 'FN': -5_000_000},
-    'Traditional':                      {'TP': 1_000_000, 'FP': -5_000,  'FN': 0},
-    'Dormant / Ngủ đông':               {'TP': 1_000_000, 'FP': -2_000,  'FN': 0},
-    'High-Value Saver':                 {'TP': 1_000_000, 'FP': -15_000, 'FN': -1_000_000},
-    'High-Value Heavy Borrower':        {'TP': 1_000_000, 'FP': -15_000, 'FN': -2_000_000},
-    'Senior High-Value Heavy Borrower': {'TP': 1_000_000, 'FP': -10_000, 'FN': -4_000_000},
-    'High-Value Traditional':           {'TP': 1_000_000, 'FP': -8_000,  'FN': -500_000},
+    'Senior High-Value Saver':          {'TP': 2_060_000, 'FP': -10_000, 'FN': -5_000_000},
+    'Traditional':                      {'TP': 2_060_000, 'FP': -5_000,  'FN': 0},
+    'Dormant / Ngủ đông':               {'TP': 2_060_000, 'FP': -2_000,  'FN': 0},
+    'High-Value Saver':                 {'TP': 2_060_000, 'FP': -15_000, 'FN': -1_000_000},
+    'High-Value Heavy Borrower':        {'TP': 2_060_000, 'FP': -15_000, 'FN': -2_000_000},
+    'Senior High-Value Heavy Borrower': {'TP': 2_060_000, 'FP': -10_000, 'FN': -4_000_000},
+    'High-Value Traditional':           {'TP': 2_060_000, 'FP': -8_000,  'FN': -500_000},
 }
 
 vip_personas = ['Wealthy Passive', 'Digital VIP', 'Senior High-Value Saver', 'Senior High-Value Heavy Borrower']
 
 print("Calculating Thresholds by Persona x Channel...")
 
-def emu_func(p, cr, cost, fn_val, fp_val, tp_val):
+def threshold_emu_func(p, cr, cost, tp_val, fn_val, fp_val):
     uplift = 4 * p * (1 - p) * cr
-    return uplift * (tp_val - fn_val) + (1 - p - uplift) * fp_val - cost
+    return uplift * (tp_val - fn_val) + fp_val - cost
 
 results = []
 for persona, economics in fum_matrix.items():
@@ -52,14 +60,14 @@ for persona, economics in fum_matrix.items():
             continue
             
         def target(p):
-            return emu_func(p, ch_data['cr'], ch_data['cost'], fn_val, fp_val, tp_val)
+            return threshold_emu_func(p, ch_data['cr'], ch_data['cost'], tp_val, fn_val, fp_val)
         
         ps = np.linspace(0, 1, 5000)
         emus = target(ps)
         
         valid_ps = ps[emus >= 0]
         if len(valid_ps) > 0:
-            thresholds[ch_name] = f"{valid_ps[0]:.4f}"
+            thresholds[ch_name] = float(valid_ps[0])
         else:
             thresholds[ch_name] = "No ROI"
             
@@ -71,7 +79,15 @@ for persona, economics in fum_matrix.items():
     })
 
 df_thresh = pd.DataFrame(results)
+df_thresh_display = df_thresh.copy()
+for col in ['Threshold SMS', 'Threshold Telesales', 'Threshold RM']:
+    df_thresh_display[col] = df_thresh_display[col].map(
+        lambda value: f"{value:.4f}" if isinstance(value, float) else value
+    )
 
 out_path = os.path.join(BASE_DIR, "thresholds.md")
 with open(out_path, "w", encoding="utf-8") as f:
-    f.write(df_thresh.to_markdown(index=False))
+    f.write(frame_to_markdown(df_thresh_display))
+
+csv_path = os.path.join(BASE_DIR, "thresholds.csv")
+df_thresh.to_csv(csv_path, index=False)

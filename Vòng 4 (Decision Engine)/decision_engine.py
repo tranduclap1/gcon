@@ -6,6 +6,15 @@ import os
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
+def frame_to_markdown(df):
+    rows = [[str(col) for col in df.columns]]
+    rows.extend(df.fillna('').astype(str).values.tolist())
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    header = '| ' + ' | '.join(rows[0][i].ljust(widths[i]) for i in range(len(widths))) + ' |'
+    separator = '| ' + ' | '.join('-' * widths[i] for i in range(len(widths))) + ' |'
+    body = ['| ' + ' | '.join(row[i].ljust(widths[i]) for i in range(len(widths))) + ' |' for row in rows[1:]]
+    return '\n'.join([header, separator] + body)
+
 print("Loading data...")
 try:
     # 1. Load probabilities (IB) - Keeping Product Dimension
@@ -19,9 +28,13 @@ try:
     
     # Load real IB Personas
     path_ib_personas = os.path.join(BASE_DIR, "NBFO_IB", "processed_data", "ib_final_personas.parquet")
-    df_ib_personas = pd.read_parquet(path_ib_personas)
-    df_ib_prob = df_ib_prob.merge(df_ib_personas[['CUSTOMER_NUMBER', 'PERSONA']], on='CUSTOMER_NUMBER', how='left')
-    df_ib_prob['PERSONA'].fillna('Standard', inplace=True)
+    if os.path.exists(path_ib_personas):
+        df_ib_personas = pd.read_parquet(path_ib_personas)
+        df_ib_prob = df_ib_prob.merge(df_ib_personas[['CUSTOMER_NUMBER', 'PERSONA']], on='CUSTOMER_NUMBER', how='left')
+    else:
+        print("IB persona file not found; defaulting IB personas to Standard.")
+        df_ib_prob['PERSONA'] = 'Standard'
+    df_ib_prob['PERSONA'] = df_ib_prob['PERSONA'].fillna('Standard')
     
     # 2. Load Non-IB
     path_nonib = os.path.join(BASE_DIR, "Cluster_nonIB", "output", "nonib_final_personas.parquet")
@@ -64,13 +77,13 @@ fum_matrix = {
     'Young Digital':   {'TP': 5_000_000, 'FP': -100_000, 'FN': 0},
     'Standard':        {'TP': 5_000_000, 'FP': -40_000, 'FN': 0},
     
-    'Senior High-Value Saver':          {'TP': 1_000_000, 'FP': -10_000, 'FN': -5_000_000},
-    'Traditional':                      {'TP': 1_000_000, 'FP': -5_000,  'FN': 0},
-    'Dormant / Ngủ đông':               {'TP': 1_000_000, 'FP': -2_000,  'FN': 0},
-    'High-Value Saver':                 {'TP': 1_000_000, 'FP': -15_000, 'FN': -1_000_000},
-    'High-Value Heavy Borrower':        {'TP': 1_000_000, 'FP': -15_000, 'FN': -2_000_000},
-    'Senior High-Value Heavy Borrower': {'TP': 1_000_000, 'FP': -10_000, 'FN': -4_000_000},
-    'High-Value Traditional':           {'TP': 1_000_000, 'FP': -8_000,  'FN': -500_000},
+    'Senior High-Value Saver':          {'TP': 2_060_000, 'FP': -10_000, 'FN': -5_000_000},
+    'Traditional':                      {'TP': 2_060_000, 'FP': -5_000,  'FN': 0},
+    'Dormant / Ngủ đông':               {'TP': 2_060_000, 'FP': -2_000,  'FN': 0},
+    'High-Value Saver':                 {'TP': 2_060_000, 'FP': -15_000, 'FN': -1_000_000},
+    'High-Value Heavy Borrower':        {'TP': 2_060_000, 'FP': -15_000, 'FN': -2_000_000},
+    'Senior High-Value Heavy Borrower': {'TP': 2_060_000, 'FP': -10_000, 'FN': -4_000_000},
+    'High-Value Traditional':           {'TP': 2_060_000, 'FP': -8_000,  'FN': -500_000},
 }
 
 channels = {
@@ -78,6 +91,9 @@ channels = {
     'Telesales': {'cost': 50_000, 'cr': 0.05},
     'RM': {'cost': 2_000_000, 'cr': 0.15}
 }
+
+channel_names = np.array(['SMS', 'Telesales', 'RM'])
+channel_costs = np.array([channels[ch]['cost'] for ch in channel_names])
 
 # Identify VIPs
 vip_personas = ['Wealthy Passive', 'Digital VIP', 'Senior High-Value Saver', 'Senior High-Value Heavy Borrower']
@@ -91,26 +107,89 @@ df_master['FN'] = df_master['PERSONA'].map(lambda x: fum_matrix.get(x, fum_matri
 # TIE BREAKER: Asset Proxy (simulated from customer ID for stable ranking)
 df_master['ASSET_SCORE'] = (df_master['CUSTOMER_NUMBER'] % 10000) / 10000.0
 
-def calculate_emu(df, fp_multiplier=1.0, cr_multiplier=1.0):
+def threshold_emu_formula(p, cr, cost, tp_val, fn_val, fp_val):
+    uplift = 4 * p * (1 - p) * cr
+    return uplift * (tp_val - fn_val) + fp_val - cost
+
+def calculate_channel_thresholds():
+    thresholds = {}
+    ps = np.linspace(0, 1, 5000)
+    for persona, economics in fum_matrix.items():
+        thresholds[persona] = {}
+        is_vip = persona in vip_personas
+        for ch_name, ch_data in channels.items():
+            if ch_name == 'RM' and not is_vip:
+                thresholds[persona][ch_name] = None
+                continue
+            emus = threshold_emu_formula(
+                ps,
+                ch_data['cr'],
+                ch_data['cost'],
+                economics['TP'],
+                economics['FN'],
+                economics['FP'],
+            )
+            valid_ps = ps[emus >= 0]
+            thresholds[persona][ch_name] = float(valid_ps[0]) if len(valid_ps) > 0 else None
+    return thresholds
+
+def load_thresholds_from_csv():
+    threshold_path = os.path.join(BASE_DIR, "thresholds.csv")
+    if not os.path.exists(threshold_path):
+        return None
+
+    df_thresholds = pd.read_csv(threshold_path)
+    thresholds = {}
+    column_map = {
+        'SMS': 'Threshold SMS',
+        'Telesales': 'Threshold Telesales',
+        'RM': 'Threshold RM',
+    }
+    for _, row in df_thresholds.iterrows():
+        persona = row['Persona']
+        thresholds[persona] = {}
+        for ch_name, col_name in column_map.items():
+            value = row[col_name]
+            if pd.isna(value) or str(value) in {'N/A', 'No ROI'}:
+                thresholds[persona][ch_name] = None
+            else:
+                thresholds[persona][ch_name] = float(value)
+    return thresholds
+
+threshold_matrix = load_thresholds_from_csv() or calculate_channel_thresholds()
+
+def build_eligibility_matrix(df, thresholds):
+    eligible = np.full((len(df), len(channel_names)), False)
+    for channel_idx, ch_name in enumerate(channel_names):
+        persona_thresholds = df['PERSONA'].map(
+            lambda persona: thresholds.get(persona, thresholds['Standard']).get(ch_name)
+        )
+        has_threshold = persona_thresholds.notna()
+        eligible[:, channel_idx] = has_threshold & (df['PROBABILITY'] >= persona_thresholds.astype(float))
+    return eligible
+
+eligibility_matrix = build_eligibility_matrix(df_master, threshold_matrix)
+
+def apply_threshold_filter(value_matrix, eligible_matrix):
+    return np.where(eligible_matrix, value_matrix, -999_999_999)
+
+def calculate_emu(df, fp_multiplier=1.0, cr_multipliers=None):
+    if cr_multipliers is None:
+        cr_multipliers = {'SMS': 1.0, 'Telesales': 1.0, 'RM': 1.0}
+
     P_base = df['PROBABILITY']
-    
-    # UPLIFT MODELING
-    uplift_sms = 4 * P_base * (1 - P_base) * channels['SMS']['cr'] * cr_multiplier
-    uplift_tele = 4 * P_base * (1 - P_base) * channels['Telesales']['cr'] * cr_multiplier
-    uplift_rm = 4 * P_base * (1 - P_base) * channels['RM']['cr'] * cr_multiplier
-    
-    # FUM Parameters
+
+    uplift_sms = 4 * P_base * (1 - P_base) * channels['SMS']['cr'] * cr_multipliers.get('SMS', 1.0)
+    uplift_tele = 4 * P_base * (1 - P_base) * channels['Telesales']['cr'] * cr_multipliers.get('Telesales', 1.0)
+    uplift_rm = 4 * P_base * (1 - P_base) * channels['RM']['cr'] * cr_multipliers.get('RM', 1.0)
+
     tp_array = df['TP']
     fn_array = df['FN']
     fp_array = df['FP'] * fp_multiplier
-    
-    # EMU = Uplift * (TP - FN) + (1 - P_base - Uplift) * FP - Cost
-    emu_sms = uplift_sms * (tp_array - fn_array) + (1 - P_base - uplift_sms) * fp_array - channels['SMS']['cost']
-    emu_tele = uplift_tele * (tp_array - fn_array) + (1 - P_base - uplift_tele) * fp_array - channels['Telesales']['cost']
-    emu_rm = uplift_rm * (tp_array - fn_array) + (1 - P_base - uplift_rm) * fp_array - channels['RM']['cost']
-    
-    # RM is only for VIPs
-    emu_rm = np.where(df['IS_VIP'], emu_rm, -999_999_999)
+
+    emu_sms = uplift_sms * (tp_array - fn_array) + fp_array - channels['SMS']['cost']
+    emu_tele = uplift_tele * (tp_array - fn_array) + fp_array - channels['Telesales']['cost']
+    emu_rm = uplift_rm * (tp_array - fn_array) + fp_array - channels['RM']['cost']
     
     # Add Tie-breaker
     tie_breaker = 1e-6 * df['ASSET_SCORE']
@@ -118,9 +197,9 @@ def calculate_emu(df, fp_multiplier=1.0, cr_multiplier=1.0):
     return np.vstack([emu_sms + tie_breaker, emu_tele + tie_breaker, emu_rm + tie_breaker]).T
 
 print("Calculating Baseline EMU (Uplift Mode)...")
-emu_baseline = calculate_emu(df_master)
+emu_baseline = apply_threshold_filter(calculate_emu(df_master), eligibility_matrix)
 
-def solve_allocation_with_sunkcost(emu_matrix):
+def solve_allocation(emu_matrix):
     N = len(df_master)
     allocations = np.full((N, 3), 0)
     best_channels = np.argmax(emu_matrix, axis=1)
@@ -131,16 +210,9 @@ def solve_allocation_with_sunkcost(emu_matrix):
     tele_rm_indices = np.where(valid & ((best_channels == 1) | (best_channels == 2)))[0]
     tele_rm_indices = tele_rm_indices[np.argsort(-max_emus[tele_rm_indices])]
     
-    # --- SUNK COST LOWER BOUND CONSTRAINT (RM >= 100) ---
-    # Force allocate top 100 RM even if we have to displace some Tele
-    rm_valid_indices = np.where(valid & (best_channels == 2))[0]
-    rm_valid_indices = rm_valid_indices[np.argsort(-max_emus[rm_valid_indices])]
-    
-    rm_forced_count = min(100, len(rm_valid_indices))
-    forced_rm_idx = rm_valid_indices[:rm_forced_count]
-    
-    for idx in forced_rm_idx:
-        allocations[idx, 2] = 1
+    # No lower-bound constraint for RM. RM is selected only when it wins on EMU.
+    rm_forced_count = 0
+    forced_rm_idx = np.array([], dtype=int)
         
     # Remove forced from the general pool
     tele_rm_remaining = np.setdiff1d(tele_rm_indices, forced_rm_idx, assume_unique=True)
@@ -166,23 +238,21 @@ def solve_allocation_with_sunkcost(emu_matrix):
     allocations[native_sms, 0] = 1
     
     # Check budget
-    total_cost = np.sum(allocations * np.array([5000, 50000, 2000000]))
+    total_cost = np.sum(allocations * channel_costs)
     if total_cost > 1_000_000_000:
         assigned = np.where(allocations.sum(axis=1) > 0)[0]
-        # Never drop forced RM to maintain Sunk Cost Constraint
         can_drop = np.setdiff1d(assigned, forced_rm_idx, assume_unique=True)
         
-        assigned_costs = allocations[can_drop] @ np.array([5000, 50000, 2000000])
+        assigned_costs = allocations[can_drop] @ channel_costs
         assigned_emus = emu_matrix[can_drop, np.argmax(allocations[can_drop], axis=1)]
         efficiency = assigned_emus / assigned_costs
         
         sorted_drop_idx = can_drop[np.argsort(-efficiency)]
-        # We start with cost of forced RM
         current_cost = rm_forced_count * 2000000
         
         keep_list = list(forced_rm_idx)
         for idx in sorted_drop_idx:
-            c = allocations[idx] @ np.array([5000, 50000, 2000000])
+            c = allocations[idx] @ channel_costs
             if current_cost + c <= 1_000_000_000:
                 current_cost += c
                 keep_list.append(idx)
@@ -195,14 +265,12 @@ def solve_allocation_with_sunkcost(emu_matrix):
         
     total_profit = np.sum(allocations * emu_matrix)
     counts = np.sum(allocations, axis=0)
-    cost = np.sum(allocations * np.array([5000, 50000, 2000000]))
+    cost = np.sum(allocations * channel_costs)
     
     return total_profit, counts, cost, allocations
 
-profit_base, counts_base, cost_base, alloc_base = solve_allocation_with_sunkcost(emu_baseline)
+profit_base, counts_base, cost_base, alloc_base = solve_allocation(emu_baseline)
 
-# Assign channels based on the allocations matrix
-channel_names = np.array(['SMS', 'Telesales', 'RM'])
 assigned_indices = np.where(alloc_base == 1)
 df_master['RECOMMENDED_CHANNEL'] = 'None'
 df_master.loc[assigned_indices[0], 'RECOMMENDED_CHANNEL'] = channel_names[assigned_indices[1]]
@@ -217,11 +285,15 @@ print(f"Cost: {cost_base:,.0f}")
 print(f"Allocations: SMS={counts_base[0]}, Tele={counts_base[1]}, RM={counts_base[2]}")
 
 print("\nSample Allocation Output:")
-print(df_master[['CUSTOMER_NUMBER', 'PERSONA', 'RECOMMENDED_PRODUCT', 'PROBABILITY', 'RECOMMENDED_CHANNEL']].head(5).to_markdown(index=False))
+print(frame_to_markdown(df_master[['CUSTOMER_NUMBER', 'PERSONA', 'RECOMMENDED_PRODUCT', 'PROBABILITY', 'RECOMMENDED_CHANNEL']].head(5)))
 
-print("\nCalculating Stress-Test (FP VIP cost +20%, CR -15%)...")
-emu_stress = calculate_emu(df_master, fp_multiplier=1.2, cr_multiplier=0.85)
-profit_stress, counts_stress, cost_stress, alloc_stress = solve_allocation_with_sunkcost(emu_stress)
+print("\nCalculating Stress-Test (FP VIP cost +20%, CR -15% for Telesales and RM)...")
+stress_cr_multipliers = {'SMS': 1.0, 'Telesales': 0.85, 'RM': 0.85}
+emu_stress = apply_threshold_filter(
+    calculate_emu(df_master, fp_multiplier=1.2, cr_multipliers=stress_cr_multipliers),
+    eligibility_matrix
+)
+profit_stress, counts_stress, cost_stress, alloc_stress = solve_allocation(emu_stress)
 
 print("Stress Results:")
 print(f"Profit: {profit_stress:,.0f}")

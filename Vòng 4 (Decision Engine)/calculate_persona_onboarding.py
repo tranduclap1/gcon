@@ -3,6 +3,15 @@ import numpy as np
 import warnings
 warnings.filterwarnings('ignore')
 
+def frame_to_markdown(df):
+    rows = [[str(col) for col in df.columns]]
+    rows.extend(df.fillna('').astype(str).values.tolist())
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    header = '| ' + ' | '.join(rows[0][i].ljust(widths[i]) for i in range(len(widths))) + ' |'
+    separator = '| ' + ' | '.join('-' * widths[i] for i in range(len(widths))) + ' |'
+    body = ['| ' + ' | '.join(row[i].ljust(widths[i]) for i in range(len(widths))) + ' |' for row in rows[1:]]
+    return '\n'.join([header, separator] + body)
+
 print("1. Loading historical monthly data for IB customers...")
 df_month = pd.read_parquet('NBFO_IB/processed_data/gcon_customer_month_clean.parquet')
 
@@ -87,7 +96,7 @@ md_content = f"""# Phân tích Tỷ lệ Onboarding Thực tế theo Từng Pers
 
 ### Kết quả Conversion Rate theo Persona:
 
-{df_results.to_markdown(index=False)}
+{frame_to_markdown(df_results)}
 
 **Kết luận & Insight:**
 - Phương pháp này bắt được chính xác hành vi của khách hàng ngay trước khi họ "bị thuyết phục" cài App.

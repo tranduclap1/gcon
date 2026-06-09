@@ -10,14 +10,18 @@ import os
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 print("Loading IB customer data...")
-in_path = os.path.join(BASE_DIR, "NBFO_IB", "processed_data", "gcon_customer_month_clean.parquet")
+clean_path = os.path.join(BASE_DIR, "NBFO_IB", "processed_data", "gcon_customer_month_clean.parquet")
+model_input_path = os.path.join(BASE_DIR, "NBFO_IB", "processed_data", "gcon_model_input.parquet")
+in_path = clean_path if os.path.exists(clean_path) else model_input_path
+print(f"Using input: {in_path}")
 df = pd.read_parquet(in_path)
 
 # Aggregate to customer level (take latest month)
 df_cust = df.sort_values('MONTH').groupby('CUSTOMER_NUMBER').last().reset_index()
 
 # Select features for clustering
-features = ['AVG_CA_BALANCE', 'AVG_TD_BALANCE', 'TRANS_AMOUNT_SUM', 'TRANS_NO_SUM', 'AGE']
+age_col = 'AGE' if 'AGE' in df_cust.columns else 'AGE_CLEAN'
+features = ['AVG_CA_BALANCE', 'AVG_TD_BALANCE', 'TRANS_AMOUNT_SUM', 'TRANS_NO_SUM', age_col]
 X = df_cust[features].copy()
 
 # Impute and scale
@@ -48,31 +52,33 @@ print(profile)
 # etc.
 
 # For simplicity, we just assign the names we used in the report directly to the clusters based on their stats
-td_ranks = profile['AVG_TD_BALANCE'].rank()
-trans_ranks = profile['TRANS_AMOUNT_SUM'].rank()
-
-# Define a mapping logic based on actual cluster results
+# Define a deterministic one-to-one mapping from clusters to the 5 IB personas.
 persona_map = {}
-for c in range(5):
-    if profile.loc[c, 'AVG_TD_BALANCE'] == profile['AVG_TD_BALANCE'].max():
-        persona_map[c] = 'Wealthy Passive'
-    elif profile.loc[c, 'TRANS_AMOUNT_SUM'] == profile['TRANS_AMOUNT_SUM'].max():
-        persona_map[c] = 'Digital VIP'
-    elif profile.loc[c, 'AGE'] == profile['AGE'].min():
-        persona_map[c] = 'Young Digital'
-    elif c not in persona_map:
-        persona_map[c] = 'Mass Active' if len(persona_map) % 2 == 0 else 'Standard'
+remaining = set(profile.index)
 
-# Ensure all 5 have distinct names if logic overlaps
-used_names = list(persona_map.values())
-default_names = ['Wealthy Passive', 'Digital VIP', 'Young Digital', 'Mass Active', 'Standard']
-for c in range(5):
-    if c not in persona_map:
-        for name in default_names:
-            if name not in used_names:
-                persona_map[c] = name
-                used_names.append(name)
-                break
+wealth_cluster = profile['AVG_TD_BALANCE'].idxmax()
+persona_map[wealth_cluster] = 'Wealthy Passive'
+remaining.remove(wealth_cluster)
+
+digital_cluster = profile.loc[list(remaining), 'TRANS_AMOUNT_SUM'].idxmax()
+persona_map[digital_cluster] = 'Digital VIP'
+remaining.remove(digital_cluster)
+
+young_cluster = profile.loc[list(remaining), age_col].idxmin()
+persona_map[young_cluster] = 'Young Digital'
+remaining.remove(young_cluster)
+
+activity_score = (
+    profile['TRANS_NO_SUM'].rank(pct=True)
+    + profile['TRANS_AMOUNT_SUM'].rank(pct=True)
+    + profile['AVG_CA_BALANCE'].rank(pct=True)
+)
+mass_cluster = activity_score.loc[list(remaining)].idxmax()
+persona_map[mass_cluster] = 'Mass Active'
+remaining.remove(mass_cluster)
+
+standard_cluster = next(iter(remaining))
+persona_map[standard_cluster] = 'Standard'
 
 df_cust['PERSONA'] = df_cust['CLUSTER'].map(persona_map)
 
