@@ -1,186 +1,219 @@
-# BÁO CÁO KẾT QUẢ VÒNG 4.2: ENTERPRISE-GRADE DECISION ENGINE
+# BÁO CÁO KẾT QUẢ VÒNG 4.2: DECISION ENGINE - IB ONLY SCENARIO
 **Đội thi:** GCON (Nguyễn Tiến Mạnh, Phạm Văn Linh, Trần Đức Lập)
 
 ---
 
-## PHẦN 1: TỔNG QUAN KIẾN TRÚC HỆ THỐNG (SYSTEM ARCHITECTURE)
+## PHẦN 1: TỔNG QUAN KỊCH BẢN
 
-Hệ thống Decision Engine không chỉ là một file code chạy rời rạc. Để triển khai thực tế tại một ngân hàng, hệ thống được thiết kế chạy **Batch Daily (Cập nhật hàng ngày)** vào lúc 02:00 AM, theo luồng kiến trúc liền mạch sau:
+Theo yêu cầu thử nghiệm mới, Decision Engine được chạy lại với 2 thay đổi:
+
+1. **Loại hoàn toàn nhóm Non-IB khỏi phần tính toán.**
+2. **Giảm budget constraint từ 1,000,000,000 VND xuống 700,000,000 VND.**
+
+Luồng hệ thống sau khi loại Non-IB:
 
 ```mermaid
 graph TD
-    A[(Data Warehouse / Data Lake)] -->|Raw Transaction & Demographics| B(XGBoost Propensity Model)
-    A -->|Feature Vectors| C(GMM Clustering Model)
-    
-    B -->|Raw P_buy| D{Segment-based Calibration}
-    C -->|Persona Labels| D
-    
-    D -->|Calibrated Probabilities| E[Persuadability Heuristic Module]
-    E -->|Expected Marginal Utility / Cost Score| F((ILP / Greedy Solver))
-    
-    F -->|Budget & Constraints| F
-    
-    F -->|Threshold Filtered| G{Action Dispatcher}
-    
-    G -->|Telesales = 1| H[CRM System - Telesales Queue]
-    G -->|SMS = 1| I[Automated SMS Gateway]
-    G -->|RM = 1| J[VIP Relationship Manager Dashboard]
-    G -->|None| K[Auto-Brake / Do Nothing]
+    A[(IB Customer Data)] -->|Product Ownership & Digital Activity| B(Rule-based IB Segmentation)
+    A -->|NBFO Model Scores| C(XGBoost NBFO Propensity)
+
+    B -->|V1/V2/V3/N1/N2/N3| D{Segment-Aware Decision Layer}
+    C -->|Product Probability| D
+
+    D -->|Probability + FUM| E[Expected Marginal Utility]
+    E -->|Segment x Channel Threshold| F((Budget Solver))
+    F -->|Budget <= 700M & Human Cap <= 10,000| G{Action Dispatcher}
+
+    G -->|SMS| H[SMS Gateway]
+    G -->|Telesales| I[CRM Telesales Queue]
+    G -->|RM| J[RM Queue]
+    G -->|None| K[Auto-Brake]
 ```
 
-**Kịch bản vận hành:**
-1. Mỗi đêm, **Data Warehouse** đẩy hàng triệu bản ghi khách hàng mới nhất.
-2. Mô hình **NBFO (XGBoost)** dự báo xác suất thô, đồng thời **GMM** phân loại họ vào 12 Personas.
-3. Module **Calibration** hiệu chỉnh xác suất chéo theo từng Sản phẩm x Persona để xóa bỏ độ lệch (bias).
-4. Module **Persuadability Heuristic** tính toán hàm $EMU(P)$ từ xác suất đã calibrate. Khách hàng có EMU âm bị loại ngay lập tức.
-5. Bộ giải **Solver (ILP/Greedy)** cầm 1 Tỷ ngân sách và giới hạn công suất kênh để nhặt ra phương án tối ưu nhất.
-6. Kết quả đẩy thẳng vào màn hình CRM của Telesales vào 08:00 AM sáng hôm sau.
+---
+
+## PHẦN 2: IB SEGMENTATION
+
+IB được chia bằng rule cascade:
+
+```python
+if login_count == 0:
+    segment = 'N3_Dormant'
+elif AVG_LOAN_AMOUNT > 500_000_000:
+    segment = 'V1_HV_Borrower'
+elif AVG_TD_BALANCE > 100_000_000 and has_loan == 0:
+    segment = 'V2_Conservative'
+elif product_depth >= 3 and AVG_TD_BALANCE > 200_000_000:
+    segment = 'V3_Multi_Premium'
+elif has_card == 1 and has_loan == 1:
+    segment = 'N1_Active_Digital'
+else:
+    segment = 'N2_Semi_Digital'
+```
+
+| Segment | Nhóm | Logic kinh doanh |
+|---|---|---|
+| V1_HV_Borrower | VIP | Dư nợ lớn, cơ hội cross-sell cao |
+| V2_Conservative | VIP | Gửi tiền lớn, không vay, cần tiếp cận thận trọng |
+| V3_Multi_Premium | VIP | Đa sản phẩm, tài sản cao |
+| N1_Active_Digital | Normal | Có loan + card, digital active |
+| N2_Semi_Digital | Normal | Có dùng IB nhưng chưa sâu |
+| N3_Dormant | Dormant | Đã có IB nhưng chưa active mạnh |
 
 ---
 
-## PHẦN 2: PHÂN TÍCH 12 PERSONAS VÀ LOGIC UNIT ECONOMICS
+## PHẦN 3: FINANCIAL UTILITY MATRIX
 
-Hệ thống phân chia 251,889 khách hàng thành 12 nhóm hành vi (5 IB và 7 Non-IB). Với mỗi nhóm, chúng tôi thiết lập Ma trận Tiện ích Tài chính (FUM) cực kỳ gắt gao dựa trên rủi ro nghiệp vụ.
+Các số theo đề bài:
 
-### 2.1. Nhóm Khách hàng IB (Mục tiêu Cross-sell NBFO)
-| Persona (Phân khúc) | LTV (True Positive) | Phạt Rác (FP) | Phạt Bỏ Lỡ (FN) | Giải thích Logic Kinh Doanh |
-|:---|:---|:---|:---|:---|
-| **Wealthy Passive** | +5,000,000 VND | -50,000 VND | **-30,000,000 VND** | Khách VIP gửi tiền nhiều nhưng ít giao dịch. Nếu lỡ cơ hội chốt Sale, bank mất khoản huy động vốn khổng lồ. Bắt buộc dùng RM. |
-| **Digital VIP** | +5,000,000 VND | -50,000 VND | **-30,000,000 VND** | VIP am hiểu công nghệ. Bỏ lỡ họ đồng nghĩa với việc họ sẽ chuyển sang ngân hàng số đối thủ. |
-| **Mass Active** | +5,000,000 VND | -50,000 VND | 0 VND | Khách phổ thông, giao dịch nhiều. TP mang lại doanh thu tốt, nhưng nếu lỡ (FN) thì cũng không quá thiệt hại. Chú trọng tránh spam (FP). |
-| **Young Digital** | +5,000,000 VND | -50,000 VND | 0 VND | Nhóm trẻ thích công nghệ. Rất nhạy cảm với Spam nên FP phạt nghiêm ngặt. |
-| **Standard** | +5,000,000 VND | -50,000 VND | 0 VND | Khách hàng vãng lai cơ bản. |
-
-### 2.2. Nhóm Khách hàng Non-IB (Mục tiêu Onboarding / Cài App)
-Thay vì dùng NBFO propensity model cho Non-IB, chúng tôi ước lượng LTV onboarding bằng cohort khách hàng IB mới. Cụ thể, trên nhóm `IB_TENURE_MONTHS <= 12`, tỷ lệ khách hàng có ít nhất một cross-sell event (`any SUBSCRIPTION = 1`) là khoảng **41.2%**. Vì một cross-sell thành công trong FUM IB được định giá **5,000,000 VND**, LTV onboarding được lấy theo công thức:
-
-$$ LTV_{NonIB} = P(CrossSell\ năm\ đầu | IB\ mới) \times 5,000,000 \approx 0.412 \times 5,000,000 = 2,060,000\ VND $$
-
-Con số này không cộng thêm revenue proxy từ phí giao dịch/spread huy động vì chưa có fee rate chính thức, nên vẫn là estimate bảo thủ dựa trên target cross-sell thật. Toàn bộ 127,003 khách hàng Non-IB được GMM phân thành **chính xác 7 Cụm (Personas)**.
-
-| Persona (Phân khúc) | LTV (True Positive) | Phạt Rác (FP) | Base Rate Phân bổ | Logic Gán Xác Suất Hậu Nghiệm |
-|:---|:---|:---|:---|:---|
-| **Traditional (80,041 khách)** | +2,060,000 VND | -5,000 VND | 10.68% | Khách hàng truyền thống bám quầy giao dịch, nhưng cohort tracking cho thấy vẫn có khả năng onboarding thực tế. |
-| **Dormant / Ngủ đông (24,570 khách)** | +2,060,000 VND | -2,000 VND | 40.18% | Nhóm ít hoạt động nhưng dữ liệu lịch sử cho thấy còn dư địa chuyển đổi khi tiếp cận đúng. |
-| **High-Value Saver (13,180 khách)** | +2,060,000 VND | -15,000 VND | 15.62% | Khách có số dư tốt. Cần App để theo dõi lãi suất tiết kiệm. |
-| **Senior High-Value Saver (7,504 khách)** | +2,060,000 VND | -10,000 VND | 18.02% | Khách lớn tuổi gửi tiền nhiều. Mất công sức thuyết phục ban đầu nhưng cài App xong sẽ gắn bó lâu dài. |
-| **High-Value Heavy Borrower (653 khách)** | +2,060,000 VND | -15,000 VND | 91.44% | Đang vay số tiền lớn. Nhu cầu cài App để theo dõi khế ước nhận nợ và lịch trả lãi là rất cao. |
-| **Senior High-Value Heavy Borrower (562 khách)** | +2,060,000 VND | -10,000 VND | 91.83% | Vay nợ lớn và lớn tuổi. Họ cần công cụ số hóa để kiểm soát dòng tiền trả nợ phức tạp của mình nhất. |
-| **High-Value Traditional (493 khách)** | +2,060,000 VND | -8,000 VND | 78.03% | Giàu nhưng bảo thủ; historical onboarding rate cao nên vẫn đáng ưu tiên nếu vượt ngưỡng kinh tế. |
+| Segment | TP | FP | FN |
+|---|---:|---:|---:|
+| V1_HV_Borrower | +5,000,000 | -50,000 | -30,000,000 |
+| V2_Conservative | +5,000,000 | -50,000 | -30,000,000 |
+| V3_Multi_Premium | +5,000,000 | -50,000 | -30,000,000 |
+| N1_Active_Digital | +5,000,000 | -50,000 | 0 |
+| N2_Semi_Digital | +5,000,000 | -50,000 | 0 |
+| N3_Dormant | +5,000,000 | -50,000 | 0 |
 
 ---
 
-## PHẦN 3: BỘ CÔNG THỨC TOÁN HỌC VÀ THUẬT TOÁN TỐI ƯU
+## PHẦN 4: CÔNG THỨC EMU
 
-### 3.1. Persuadability Score dựa trên tư duy Uplift
-Ở vòng này, dữ liệu không có A/B test hoặc treatment/control log để ước lượng causal uplift đúng nghĩa. Vì vậy, GCON **không claim đang train uplift model**. Thay vào đó, chúng tôi dùng một business heuristic lấy cảm hứng từ tư duy uplift: ưu tiên nhóm khách có khả năng bị tác động bởi marketing, thay vì chỉ ưu tiên nhóm có xác suất mua cao nhất.
+Engine dùng công thức expected-FP:
 
-$$ Persuadability(P) = 4 \times P \times (1-P) $$
+$$
+Uplift_c(P) = 4 \times P \times (1-P) \times CR_c
+$$
 
-Hàm này đo mức độ "do dự" của khách hàng. Khách hàng có $P=0.5$ đang ngập ngừng nhất, nên marketing được giả định có tác động mạnh nhất. Khách hàng có $P \approx 0$ hoặc $P \approx 1$ gần như đã quyết định rồi, nên marketing ít tạo thêm giá trị biên.
+$$
+EMU_c(P) = Uplift_c(P) \times (TP - FN) + (1 - P - Uplift_c(P)) \times FP - Cost_c
+$$
 
-Khi áp dụng theo từng kênh, điểm này được nhân với conversion rate của kênh:
-
-$$ ResponseLiftProxy_c(P) = Persuadability(P) \times CR_c = 4 \times P \times (1-P) \times CR_c $$
-
-Đây là **uplift-inspired persuadability proxy**, không phải causal uplift estimate từ A/B test.
-
-### 3.2. Phương trình Lợi Ích Biên Kỳ Vọng (Expected Marginal Utility - EMU)
-Dòng tiền thuần sinh ra khi áp dụng 1 kênh Marketing $c$ lên 1 khách hàng:
-$$ EMU_c(P) = ResponseLiftProxy_c(P) \times (TP - FN) + FP - Cost_c $$
-
-Trong công thức này, $FP$ là chi phí tiếp cận nhầm/spam của hành động liên hệ, không phải penalty cho toàn bộ nhóm khách hàng không convert.
-
-### 3.3. Thuật toán Break-Tie (Chống Chọn Ngẫu Nhiên)
-Khi giải bài toán Cái túi (Knapsack), sẽ xảy ra hiện tượng có hàng ngàn khách hàng Non-IB mang lại chung một mức $EMU$. Nếu để thuật toán ILP tự chạy, nó sẽ bốc Random. Chúng tôi bổ sung một biến vi phân:
-$$ EMU_{final} = EMU_{core} + 10^{-6} \times \text{Asset\_Proxy\_Score} $$
-Thuật toán lập tức xếp hạng ưu tiên những người có Tài sản cao, biến quá trình chọn lọc trở nên Deterministic (Chắc chắn 100%).
+Điểm quan trọng: `FP` không được cộng full cho mọi khách. FP phải được nhân với xác suất thật sự rơi vào false-positive state.
 
 ---
 
-## PHẦN 4: VECTOR ĐA NGƯỠNG TỐI ƯU (TASK 1 OUTPUT)
+## PHẦN 5: CHANNEL & CONSTRAINTS
 
-Bằng cách dùng thuật toán Dò nghiệm (Root-finding) giải phương trình $EMU_c(P) = 0$, chúng tôi tìm được các điểm cắt sinh tử (Thresholds). Dưới mức này, hệ thống sẽ tự động phanh lại (Auto-Brake) và từ chối gửi tin nhắn để chống lãng phí.
+| Kênh | Cost | CR tham khảo | Constraint |
+|---|---:|---:|---|
+| SMS | 5,000 | 2% | Không giới hạn |
+| Telesales | 50,000 | 5% | Thuộc human cap |
+| RM | 2,000,000 | 15% giả định | Thuộc human cap, VIP only |
 
-| Persona (Phân khúc) | Ngưỡng Kênh SMS | Ngưỡng Kênh Telesales | Ngưỡng Kênh RM (VIP) |
-|:------------------------|----------------:|----------------------:|:---------------|
-| **Wealthy Passive (IB)**     |          0.0202 |                0.0146 | 0.1098         |
-| **Digital VIP (IB)**         |          0.0446 |                0.0268 | 0.1664         |
-| **Mass Active (IB)**         |          0.0670 |                0.0758 | N/A            |
-| **Young Digital (IB)**       | No ROI          |                0.1838 | N/A            |
-| **Standard (IB)**            |          0.1292 |                0.1000 | N/A            |
-| **Senior High-Value Saver** |      0.0274 |                0.0446 | No ROI         |
-| **Traditional**         |          0.0650 |                0.1588 | N/A            |
-| **Dormant / Ngủ đông**        |          0.0446 |                0.1482 | N/A            |
-| **High-Value Saver**        |          0.0898 |                0.1208 | N/A            |
-| **High-Value Heavy Borrower**|          0.0660 |                0.0878 | N/A            |
-| **Senior High-Value Heavy Borrower**| 0.0320 |                0.0524 | No ROI         |
-| **High-Value Traditional**  |          0.0682 |                0.1304 | N/A            |
+Ràng buộc mới:
 
-*(Lưu ý Kiến trúc Hệ thống: Bảng ngưỡng trên là minh họa cho một ma trận chung. Trong cấu hình thực tế, module tính toán của Decision Engine chạy theo chiều sâu **Sản phẩm x Persona (Product * Persona)**. Nghĩa là ngưỡng cắt lỗ để bán Thẻ Tín Dụng cho Digital VIP sẽ hoàn toàn khác với ngưỡng cắt lỗ để mời Vay Tiêu Dùng cho chính nhóm này. Khách hàng nào đạt max(Propensity) so với Threshold của sản phẩm tương ứng sẽ được chọn làm "Next Best Offer".)*
-
-**🔥 INSIGHT TỪ BẢNG NGƯỠNG:** 
-- **Young Digital (IB)** nhạy cảm với Spam (FP) rất cao, nên SMS rơi vào trạng thái **No ROI** theo FUM hiện tại; hệ thống chỉ cân nhắc Telesales nếu xác suất vượt ngưỡng.
-- **Traditional và Dormant** sau khi cập nhật LTV onboarding lên **2.06 Triệu VND** đã có ngưỡng Telesales dương thay vì "No ROI"; engine vẫn chỉ mở kênh khi xác suất vượt ngưỡng tương ứng.
-- Nhóm Non-IB VIP (VD: Senior High-Value Saver) được đánh giá lại theo cùng LTV onboarding mới. RM chỉ được mở nếu EMU dương sau khi trừ chi phí vận hành 2,000,000 VND/cuộc tiếp cận.
-
-*Insight:* Threshold giữ vai trò auto-brake kinh tế; sau khi vượt ngưỡng, kênh được chọn theo **EMU lớn nhất** trong các kênh đủ điều kiện.
+| Constraint | Giá trị |
+|---|---:|
+| Budget | 700,000,000 VND |
+| Human-touch capacity | 10,000 lượt |
+| Population | IB only |
 
 ---
 
-## PHẦN 5: KIẾN TRÚC RA QUYẾT ĐỊNH 2 BƯỚC (TASK 2 OUTPUT)
+## PHẦN 6: THRESHOLD MATRIX
 
-Để giải quyết triệt để bài toán phân bổ, Decision Engine hoạt động theo một quy trình **2 Bước (Two-Step Process)** cực kỳ tối ưu:
+| Segment | SMS | Telesales | RM |
+|---|---:|---:|---:|
+| V1_HV_Borrower | 0.0198 | 0.0144 | 0.1092 |
+| V2_Conservative | 0.0198 | 0.0144 | 0.1092 |
+| V3_Multi_Premium | 0.0198 | 0.0144 | 0.1092 |
+| N1_Active_Digital | 0.1382 | 0.1048 | N/A |
+| N2_Semi_Digital | 0.1382 | 0.1048 | N/A |
+| N3_Dormant | 0.1382 | 0.1048 | N/A |
 
-- **Bước 1 (Lọc - Filtering):** Với mỗi khách hàng, hệ thống lấy Xác suất đối chiếu với 3 Ngưỡng của chính Persona đó. Nếu Xác suất không vượt qua bất kỳ ngưỡng nào -> Hệ thống gán `None` (Cắt bỏ ngay lập tức để tiết kiệm chi phí và chống Spam).
-- **Bước 2 (Tối ưu - Optimization):** Những khách hàng vượt ngưỡng sẽ tạo thành một "Danh sách đủ điều kiện" (Eligible List). ILP Optimizer (Thuật toán tối ưu tuyến tính nguyên) sẽ giải bài toán Knapsack: Trong giới hạn ngân sách 1 Tỷ VND và giới hạn số lượng nhân viên, chọn ai và dùng kênh nào để Tổng Lợi nhuận (Total Profit) của cả ngân hàng là lớn nhất!
-
-Dưới đây là trích xuất từ database `final_allocations.csv` thể hiện sự sắc bén của thuật toán:
-
-| CUSTOMER_ID | PERSONA | Sản phẩm Gợi ý (Product) | Xác suất | Kênh Gợi ý | Lập luận thuật toán 2-Bước |
-|---:|:---|:---|---:|:---|:---|
-| 105 | Wealthy Passive (IB) | CURRENT_ACCOUNT | 59.50% | **None** | Không được phân bổ vì sau lớp threshold/filtering, EMU khả dụng không còn dương trong cấu hình hiện tại. |
-| 541 | Young Digital (IB) | CREDIT_CARD | 0.36% | **None** | Không vượt ngưỡng Telesales của Young Digital và SMS là No ROI, nên bị Auto-Brake. |
-| 3 | Mass Active (IB) | TERM_DEPOSIT | 3.5% | **None** | B1: Xác suất 3.5% < Ngưỡng SMS rẻ nhất của nhóm này. |
-| 0 | Young Digital (IB) | TERM_DEPOSIT | 12.0% | **None** | Khách trẻ nhạy cảm spam, SMS No ROI và Tele cần xác suất cao hơn. |
-| 13 | Standard (IB) | CURRENT_ACCOUNT | 27.22% | **SMS** | Vượt ngưỡng và SMS có EMU dương cao nhất trong các kênh khả dụng cho khách hàng này. |
-| 69 | Standard (IB) | CURRENT_ACCOUNT | 53.31% | **Telesales** | Xác suất cao hơn làm EMU tuyệt đối của Telesales thắng SMS. |
-| 3148 | Wealthy Passive (IB) | CURRENT_ACCOUNT | 49.24% | **RM** | VIP có giá trị kỳ vọng lớn; RM được chọn khi EMU tuyệt đối vượt SMS/Telesales sau chi phí. |
-| 4 | Senior High-Value Saver | Digital Onboarding | 17.57% | **SMS** | Vượt threshold onboarding; SMS là kênh có EMU tốt nhất trong cấu hình khách hàng này. |
-| 30 | Dormant / Ngủ đông | Digital Onboarding | 40.97% | **SMS** | Vượt ngưỡng SMS và Telesales; SMS vẫn có EMU cao nhất sau cost và response-lift proxy. |
-
-**Tổng kết Dòng tiền (Baseline - Ứng dụng Real Historical Data):**
-* Kênh phân bổ: **SMS** (69,026 lượt), **Telesales** (6,665 lượt), **RM** (160 lượt).
-* Lợi nhuận sinh ra từ **response-lift proxy**: **4.35 Tỷ VND**.
-* Chi phí vận hành: **998.4 Triệu VND**.
-* Stress test FP VIP +20%, CR Telesales/RM -15%: **4.25 Tỷ VND**, với **SMS** (70,574), **Telesales** (7,547), **RM** (134).
+Khi FP được chuẩn hóa về spam cost `-50,000`, VIP không còn bị phạt quá nặng. RM threshold giảm xuống 10.92% và bắt đầu được mở cho một nhóm nhỏ khách VIP.
 
 ---
 
-## PHẦN 6: PHÂN TÍCH ĐỘ NHẠY 2D & ĐIỂM GÃY AUTO-BRAKE (TASK 3)
+## PHẦN 7: BASELINE ALLOCATION - IB ONLY, BUDGET 700M
 
-Để chứng minh hệ thống chịu được bão khủng hoảng, chúng tôi chạy vòng lặp mô phỏng Bản đồ nhiệt (Heatmap) trên 16 kịch bản đa biến:
-- **Trục X:** CR của RM giảm dần (do Sales chốt kém).
-- **Trục Y:** Rủi ro phạt FP Khách VIP tăng dần.
-- **Policy cố định:** Threshold/eligible pool được giữ theo baseline, chỉ EMU trong từng scenario thay đổi theo CR/FP stress. Nhờ vậy heatmap đo sức chịu đựng của chiến lược hiện tại, không phải một engine tự recalibrate trước khủng hoảng.
+| Metric | Kết quả |
+|---|---:|
+| Tổng khách trong engine | 124,886 |
+| IB | 124,886 |
+| Non-IB | 0 |
+| Profit kỳ vọng | 2,614,142,732 VND |
+| Cost | 648,870,000 VND |
+| Budget limit | 700,000,000 VND |
+| SMS | 20,024 |
+| Telesales | 9,975 |
+| RM | 25 |
+| None / Auto-brake | 94,862 |
+| Human-touch used | 10,000 |
 
-**MA TRẬN LỢI NHUẬN THUẦN (VND):**
-| Mức tăng Phạt rác (FP) | RM giảm 5% CR | RM giảm 10% CR | RM giảm 15% CR | RM giảm 20% CR |
-|:--------|------------:|------------:|------------:|------------:|
-| **+10% FP VIP** | 4.63 Tỷ | 5.04 Tỷ | 5.50 Tỷ | 5.96 Tỷ |
-| **+20% FP VIP** | 4.62 Tỷ | 5.02 Tỷ | 5.48 Tỷ | 5.94 Tỷ |
-| **+30% FP VIP** | 4.60 Tỷ | 5.01 Tỷ | 5.46 Tỷ | 5.92 Tỷ |
-| **+40% FP VIP** | 4.59 Tỷ | 4.99 Tỷ | 5.44 Tỷ | 5.90 Tỷ |
+### Đọc kết quả
 
-**MA TRẬN RÚT QUÂN (SỐ LƯỢT RM):**
-| Mức tăng Phạt rác (FP) | RM giảm 5% CR | RM giảm 10% CR | RM giảm 15% CR | RM giảm 20% CR |
-|:--------|---------:|----------:|----------:|----------:|
-| **+10% FP VIP** | 150 slot | 107 slot | 47 slot | 0 slot |
-| **+20% FP VIP** | 150 slot | 106 slot | 46 slot | 0 slot |
-| **+30% FP VIP** | 150 slot | 106 slot | 46 slot | 0 slot |
-| **+40% FP VIP** | 150 slot | 105 slot | 45 slot | 0 slot |
+1. **Loại Non-IB không làm đổi population ngoài IB**: output hiện chỉ còn 124,886 khách IB.
+2. **Budget 700M chưa binding** vì tổng cost là 648.87M.
+3. **Human cap binding** vì Telesales + RM = 10,000 lượt.
+4. **RM đã mở 25 slot** sau khi FP được đưa về spam cost -50K.
 
-**🔥 KẾT LUẬN INSIGHT KINH DOANH TỪ HEATMAP:**
-1. **Heatmap đã đồng bộ engine:** Kịch bản hiện dùng cùng FUM theo persona, cùng onboarding rate mới, cùng EMU đã sửa và cùng baseline threshold filter theo kênh.
-2. **RM rút quân theo max EMU:** Khi CR RM giảm, EMU tuyệt đối của RM mất dần lợi thế trước SMS/Telesales; số slot RM giảm từ khoảng 150 về 0 khi RM bị stress 20%.
-3. **Profit tăng theo cột là dấu hiệu cần diễn giải:** Trong cấu hình hiện tại, RM stress làm một phần khách hàng chuyển sang kênh rẻ hơn, nên tổng profit có thể tăng dù RM yếu đi. Đây không phải do recalibrate threshold, vì eligible pool đã được giữ cố định theo baseline.
+---
+
+## PHẦN 8: OUTPUT SAMPLE
+
+| CUSTOMER_NUMBER | CUSTOMER_TYPE | SEGMENT_CLUSTER | MAPPED_IB_SEGMENT | RECOMMENDED_PRODUCT | PROBABILITY | CHANNEL |
+|---:|---|---|---|---|---:|---|
+| 0 | IB | N3_Dormant | N3_Dormant | TERM_DEPOSIT | 0.003600 | None |
+| 3 | IB | N3_Dormant | N3_Dormant | TERM_DEPOSIT | 0.003345 | None |
+| 9 | IB | N3_Dormant | N3_Dormant | CREDIT_CARD | 0.015592 | None |
+| 13 | IB | N3_Dormant | N3_Dormant | CURRENT_ACCOUNT | 0.272227 | SMS |
+| 14 | IB | N3_Dormant | N3_Dormant | CURRENT_ACCOUNT | 0.345532 | SMS |
+
+---
+
+## PHẦN 9: STRESS TEST
+
+Kịch bản theo đề:
+
+- FP VIP tăng 20%.
+- CR của Kênh 2 và Kênh 3 giảm 15%.
+
+| Metric | Baseline | Stress |
+|---|---:|---:|
+| Profit | 2,614,142,732 | 2,227,659,698 |
+| Cost | 648,870,000 | 644,670,000 |
+| SMS | 20,024 | 19,964 |
+| Telesales | 9,975 | 9,977 |
+| RM | 25 | 23 |
+
+Profit giảm vì EMU của Telesales/RM bị giảm theo CR, dù nghiệm phân bổ vẫn giữ nguyên trong policy baseline.
+
+---
+
+## PHẦN 10: HEATMAP
+
+### Profit matrix
+
+| FP VIP / CR Kênh 2&3 | -5% CR | -10% CR | -15% CR | -20% CR |
+|---|---:|---:|---:|---:|
+| +10% FP | 2.485 tỷ | 2.357 tỷ | 2.229 tỷ | 2.101 tỷ |
+| +20% FP | 2.484 tỷ | 2.356 tỷ | 2.228 tỷ | 2.100 tỷ |
+| +30% FP | 2.483 tỷ | 2.355 tỷ | 2.227 tỷ | 2.099 tỷ |
+| +40% FP | 2.482 tỷ | 2.354 tỷ | 2.226 tỷ | 2.098 tỷ |
+
+### RM slots matrix
+
+| FP VIP / CR Kênh 2&3 | -5% CR | -10% CR | -15% CR | -20% CR |
+|---|---:|---:|---:|---:|
+| +10% FP | 24 | 24 | 23 | 19 |
+| +20% FP | 24 | 24 | 23 | 19 |
+| +30% FP | 24 | 24 | 23 | 19 |
+| +40% FP | 24 | 24 | 23 | 19 |
+
+Heatmap cho thấy profit nhạy mạnh với CR của Kênh 2/3. RM slots giảm từ 24 xuống 19 khi CR Kênh 2/3 giảm từ 5% xuống 20%, phản ánh engine rút dần kênh đắt khi hiệu quả kênh yếu đi.
+
+---
+
+## PHẦN 11: KẾT LUẬN
+
+Trong kịch bản IB-only với budget 700M:
+
+- Engine chỉ còn xử lý 124,886 khách IB.
+- Non-IB đã được loại hoàn toàn khỏi `final_allocations.csv`.
+- Budget 700M vẫn đủ cho nghiệm hiện tại vì cost là 648.87M.
+- Ràng buộc thực sự binding là human-touch cap 10,000 lượt.
+- Sau khi FP được đưa về -50K, RM được mở lại cho 25 khách VIP và profit baseline tăng lên 2.61 tỷ.
+
+Kịch bản này phù hợp nếu ban lãnh đạo muốn tập trung hoàn toàn vào cross-sell NBFO cho khách đã có IB, thay vì trộn thêm bài toán kích hoạt Non-IB.
