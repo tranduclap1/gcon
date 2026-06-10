@@ -9,13 +9,17 @@ from decision_config import (
     FUM_MATRIX,
     VIP_SEGMENTS,
     add_ib_segments,
+    attach_ib_register_date,
+    calculate_asset_score,
     segment_for_economics,
+    solve_channel_milp,
 )
 
 
 warnings.filterwarnings('ignore')
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-BUDGET_LIMIT = 700_000_000
+BUDGET_LIMIT = 450_000_000
+HUMAN_CAP = 6_000
 
 
 def frame_to_markdown(df):
@@ -58,9 +62,13 @@ def load_master_data():
         df_ib_features = df_ib_features.sort_values('MONTH').groupby('CUSTOMER_NUMBER').last().reset_index()
     else:
         df_ib_features = df_ib_features.groupby('CUSTOMER_NUMBER').last().reset_index()
+    df_ib_features = attach_ib_register_date(df_ib_features, BASE_DIR)
     df_ib_segments = add_ib_segments(df_ib_features)
+    asset_cols = ['AVG_TD_BALANCE', 'AVG_CA_BALANCE', 'AVG_LOAN_AMOUNT']
+    segment_cols = ['CUSTOMER_NUMBER', 'SEGMENT', 'MAPPED_IB_SEGMENT', 'CUSTOMER_TYPE']
+    segment_cols += [col for col in asset_cols if col in df_ib_segments.columns]
     df_ib_prob = df_ib_prob.merge(
-        df_ib_segments[['CUSTOMER_NUMBER', 'SEGMENT', 'MAPPED_IB_SEGMENT', 'CUSTOMER_TYPE']],
+        df_ib_segments[segment_cols],
         on='CUSTOMER_NUMBER',
         how='left',
     )
@@ -80,7 +88,8 @@ def load_master_data():
         'PROBABILITY',
         'BUY_RATE_PROXY',
     ]
-    return df_ib_prob[common_cols].copy()
+    extra_cols = [col for col in asset_cols if col in df_ib_prob.columns]
+    return df_ib_prob[common_cols + extra_cols].copy()
 
 
 print("Loading data...")
@@ -98,7 +107,7 @@ df_master['IS_VIP'] = df_master['ECONOMIC_SEGMENT'].isin(VIP_SEGMENTS)
 df_master['TP'] = df_master['ECONOMIC_SEGMENT'].map(lambda x: FUM_MATRIX.get(x, FUM_MATRIX[DEFAULT_SEGMENT])['TP'])
 df_master['FP'] = df_master['ECONOMIC_SEGMENT'].map(lambda x: FUM_MATRIX.get(x, FUM_MATRIX[DEFAULT_SEGMENT])['FP'])
 df_master['FN'] = df_master['ECONOMIC_SEGMENT'].map(lambda x: FUM_MATRIX.get(x, FUM_MATRIX[DEFAULT_SEGMENT])['FN'])
-df_master['ASSET_SCORE'] = (df_master['CUSTOMER_NUMBER'] % 10000) / 10000.0
+df_master['ASSET_SCORE'] = calculate_asset_score(df_master)
 
 
 def threshold_emu_formula(p, cr, cost, tp_val, fn_val, fp_val):
@@ -107,22 +116,25 @@ def threshold_emu_formula(p, cr, cost, tp_val, fn_val, fp_val):
     return uplift * (tp_val - fn_val) + fp_probability * fp_val - cost
 
 
-def calculate_channel_thresholds():
+def calculate_channel_thresholds(channel_config=None, fp_multiplier=1.0):
+    if channel_config is None:
+        channel_config = channels
     thresholds = {}
     ps = np.linspace(0, 1, 5000)
     for segment, economics in FUM_MATRIX.items():
         thresholds[segment] = {}
-        for ch_name, ch_data in channels.items():
+        for ch_name, ch_data in channel_config.items():
             if ch_name == 'RM' and segment not in VIP_SEGMENTS:
                 thresholds[segment][ch_name] = None
                 continue
+            fp_val = economics['FP'] * fp_multiplier if segment in VIP_SEGMENTS else economics['FP']
             emus = threshold_emu_formula(
                 ps,
                 ch_data['cr'],
                 ch_data['cost'],
                 economics['TP'],
                 economics['FN'],
-                economics['FP'],
+                fp_val,
             )
             valid_ps = ps[emus >= 0]
             thresholds[segment][ch_name] = float(valid_ps[0]) if len(valid_ps) > 0 else None
@@ -193,46 +205,15 @@ emu_baseline = apply_threshold_filter(calculate_emu(df_master), eligibility_matr
 
 
 def solve_allocation(emu_matrix):
-    n = len(df_master)
-    allocations = np.full((n, 3), 0)
-    best_channels = np.argmax(emu_matrix, axis=1)
-    max_emus = np.max(emu_matrix, axis=1)
-    valid = max_emus > 0
-
-    tele_rm_indices = np.where(valid & ((best_channels == 1) | (best_channels == 2)))[0]
-    tele_rm_indices = tele_rm_indices[np.argsort(-max_emus[tele_rm_indices])]
-    selected = tele_rm_indices[:10000]
-    rejected = tele_rm_indices[10000:]
-
-    for idx in selected:
-        allocations[idx, best_channels[idx]] = 1
-
-    sms_emu = emu_matrix[:, 0]
-    fallback_sms = rejected[sms_emu[rejected] > 0]
-    allocations[fallback_sms, 0] = 1
-
-    native_sms = np.where(valid & (best_channels == 0))[0]
-    allocations[native_sms, 0] = 1
-
-    total_cost = np.sum(allocations * channel_costs)
-    if total_cost > BUDGET_LIMIT:
-        assigned = np.where(allocations.sum(axis=1) > 0)[0]
-        assigned_costs = allocations[assigned] @ channel_costs
-        assigned_emus = emu_matrix[assigned, np.argmax(allocations[assigned], axis=1)]
-        efficiency = assigned_emus / assigned_costs
-        sorted_keep_idx = assigned[np.argsort(-efficiency)]
-
-        current_cost = 0
-        keep_list = []
-        for idx in sorted_keep_idx:
-            c = allocations[idx] @ channel_costs
-            if current_cost + c <= BUDGET_LIMIT:
-                current_cost += c
-                keep_list.append(idx)
-
-        final_alloc = np.zeros((n, 3))
-        final_alloc[keep_list] = allocations[keep_list]
-        allocations = final_alloc
+    result = solve_channel_milp(
+        emu_matrix,
+        channel_costs,
+        BUDGET_LIMIT,
+        np.array([0, 1, 1]),
+        HUMAN_CAP,
+    )
+    allocations = result['allocations']
+    print(f"MILP allocation status: {result['status']} - {result['message']}")
 
     total_profit = np.sum(allocations * emu_matrix)
     counts = np.sum(allocations, axis=0)
@@ -268,11 +249,15 @@ print(frame_to_markdown(df_master[output_cols].head(5)))
 
 print("\nCalculating Stress-Test (FP VIP cost +20%, CR -15% for Telesales and RM)...")
 stress_cr_multipliers = {'SMS': 1.0, 'Telesales': 0.85, 'RM': 0.85}
-emu_stress = apply_threshold_filter(
-    calculate_emu(df_master, fp_multiplier=1.2, cr_multipliers=stress_cr_multipliers),
-    eligibility_matrix,
-)
-profit_stress, counts_stress, cost_stress, alloc_stress = solve_allocation(emu_stress)
+stress_channels = {
+    ch_name: {**ch_data, 'cr': ch_data['cr'] * stress_cr_multipliers.get(ch_name, 1.0)}
+    for ch_name, ch_data in channels.items()
+}
+emu_stress = calculate_emu(df_master, fp_multiplier=1.2, cr_multipliers=stress_cr_multipliers)
+alloc_stress = alloc_base
+profit_stress = np.sum(alloc_stress * emu_stress)
+counts_stress = np.sum(alloc_stress, axis=0)
+cost_stress = np.sum(alloc_stress * channel_costs)
 
 print("Stress Results:")
 print(f"Profit: {profit_stress:,.0f}")

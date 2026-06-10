@@ -1,8 +1,9 @@
 # IB Customer Segmentation — Rule-based
 
-**Dataset:** `cleaned_data/base_full.parquet` — IB customers only (`is_ib == 1`, `IB_REGISTER_DATE.year <= 2019`)
-**Tổng IB (2019):** 134,162 KH
-**Loại trừ:** 24,767 KH đăng ký IB năm 2020/2021 — tại thời điểm quan sát (2019) họ vẫn là Non-IB
+**Dataset:** `cleaned_data/base_full.parquet` — IB customers only (`is_ib == 1`)
+**Tổng IB:** 158,929 KH
+**Scope:** gồm cohort 2019 (`IB_REGISTER_DATE.year <= 2019`) và cohort 2020/21 (`IB_REGISTER_DATE.year in [2020, 2021]`)
+**Nguồn cohort trong code:** `NBFO_IB/processed_data/gcon_customer_month_clean.parquet` được tạo bởi `NBFO_IB/EDA_Feature_engineering.ipynb`. File model `gcon_model_input.parquet` không giữ `IB_REGISTER_DATE` vì cột này bị drop khỏi feature set.
 **Phương pháp:** Rule-based priority cascade (không dùng ML)
 
 ---
@@ -21,11 +22,24 @@ GMM loại bỏ vì dùng features khác (`TRANS_AMOUNT_SUM`, `TRANS_NO_SUM`, `A
 
 ## Phân loại (Priority Cascade)
 
-KH rơi vào segment đầu tiên thỏa điều kiện theo thứ tự:
+KH rơi vào segment đầu tiên thỏa điều kiện theo thứ tự. Hai cohort dùng rule khác nhau:
+
+**Cohort 2019** — dùng `login_count` làm tín hiệu dormant thật:
 
 ```python
-def assign_seg(r):
+def assign_seg_2019(r):
     if r['login_count'] == 0:                                           return 'N3_Dormant'
+    if r['AVG_LOAN_AMOUNT'] > 500_000_000:                              return 'V1_HV_Borrower'
+    if r['AVG_TD_BALANCE'] > 100_000_000 and r['has_loan'] == 0:        return 'V2_Conservative'
+    if r['product_depth'] >= 3 and r['AVG_TD_BALANCE'] > 200_000_000:  return 'V3_Multi_Premium'
+    if r['has_card'] == 1 and r['has_loan'] == 1:                       return 'N1_Active_Digital'
+    return 'N2_Semi_Digital'
+```
+
+**Cohort 2020/21** — bỏ `login_count` vì tại snapshot 2019 họ chưa đăng ký IB, nên `login_count = 0` là data artifact:
+
+```python
+def assign_seg_2020_21(r):
     if r['AVG_LOAN_AMOUNT'] > 500_000_000:                              return 'V1_HV_Borrower'
     if r['AVG_TD_BALANCE'] > 100_000_000 and r['has_loan'] == 0:        return 'V2_Conservative'
     if r['product_depth'] >= 3 and r['AVG_TD_BALANCE'] > 200_000_000:  return 'V3_Multi_Premium'
@@ -42,18 +56,18 @@ def assign_seg(r):
 Sau khi phân 6 segment, toàn bộ IB được chia thành 3 nhóm xử lý khác nhau:
 
 ```
-IB (134,162 KH)
+IB (158,929 KH)
 ├── VIP (3 segment) — FN có chi phí thực
-│   ├── V1 HV Borrower      6,760 KH   5.0%
-│   ├── V2 Conservative     3,702 KH   2.8%
-│   └── V3 Multi Premium      734 KH   0.5%
+│   ├── V1 HV Borrower     10,309 KH   6.5%
+│   ├── V2 Conservative     5,597 KH   3.5%
+│   └── V3 Multi Premium      798 KH   0.5%
 │
 ├── Normal (2 segment) — FN ≈ 0
-│   ├── N1 Active Digital   9,987 KH   7.4%
-│   └── N2 Semi Digital    55,107 KH  41.1%
+│   ├── N1 Active Digital  11,485 KH   7.2%
+│   └── N2 Semi Digital    72,868 KH  45.8%
 │
 └── Onboarding (1 segment) — KHÔNG đánh NBFO trực tiếp
-    └── N3 Dormant         57,872 KH  43.1%
+    └── N3 Dormant         57,872 KH  36.4%
 ```
 
 ### Tại sao VIP khác Normal?
@@ -107,7 +121,7 @@ N3 Dormant (57,872 KH — 43.1% IB)
 ---
 
 #### V3 — Multi Premium
-**N=734 | 0.5% IB | NBFO Buy Rate: 11.17%**
+**N=798 | 0.5% IB | NBFO Buy Rate: 11.17%**
 
 **Điều kiện:** `product_depth ≥ 3` VÀ `AVG_TD_BALANCE > 200M`
 
@@ -139,7 +153,7 @@ N3 Dormant (57,872 KH — 43.1% IB)
 ---
 
 #### V1 — HV Borrower
-**N=6,760 | 5.0% IB | NBFO Buy Rate: 4.56%**
+**N=10,309 | 6.5% IB | NBFO Buy Rate: 4.56%**
 
 **Điều kiện:** `AVG_LOAN_AMOUNT > 500M`
 
@@ -170,7 +184,7 @@ N3 Dormant (57,872 KH — 43.1% IB)
 ---
 
 #### V2 — Conservative Saver (Sleeping Dog)
-**N=3,702 | 2.8% IB | NBFO Buy Rate: 3.92%**
+**N=5,597 | 3.5% IB | NBFO Buy Rate: 3.92%**
 
 **Điều kiện:** `AVG_TD_BALANCE > 100M` VÀ `has_loan = 0`
 
@@ -205,7 +219,7 @@ N3 Dormant (57,872 KH — 43.1% IB)
 ---
 
 #### N1 — Active Digital
-**N=9,987 | 7.4% IB | NBFO Buy Rate: 6.81%**
+**N=11,485 | 7.2% IB | NBFO Buy Rate: 6.81%**
 
 **Điều kiện:** `has_card = 1` VÀ `has_loan = 1`
 
@@ -237,7 +251,7 @@ N3 Dormant (57,872 KH — 43.1% IB)
 ---
 
 #### N2 — Semi Digital
-**N=55,107 | 41.1% IB | NBFO Buy Rate: 2.13%**
+**N=72,868 | 45.8% IB | NBFO Buy Rate: 2.13%**
 
 **Điều kiện:** Còn lại (đã login ít nhất 1 lần, không fit V1/V2/V3/N1)
 
@@ -270,7 +284,7 @@ N3 Dormant (57,872 KH — 43.1% IB)
 ---
 
 #### N3 — Dormant IB
-**N=57,872 | 43.1% IB | Buy Rate lịch sử: 5.13%***
+**N=57,872 | 36.4% IB | Buy Rate lịch sử: 5.13%***
 
 **Điều kiện:** `login_count = 0` — chưa bao giờ login IB
 
@@ -304,12 +318,12 @@ N3 Dormant (57,872 KH — 43.1% IB)
 
 | Segment | N | %IB | Tuổi | Nữ% | Loan (med) | TD (med) | Login (med) | Buy Rate | FUM Role |
 |---|---|---|---|---|---|---|---|---|---|
-| V3 Multi Premium | 734 | 0.5% | 36 | 59% | 18M | 551M | 42 | **11.17%** | VIP |
-| V1 HV Borrower | 6,760 | 5.0% | 35 | 35% | 879M | 0M | 14 | 4.56% | VIP |
-| V2 Conservative | 3,702 | 2.8% | 35 | 61% | 0M | 350M | 19 | 3.92% | VIP (Sleeping Dog) |
-| N1 Active Digital | 9,987 | 7.4% | 32 | 37% | 60M | 0M | 28 | **6.81%** | Normal |
-| N2 Semi Digital | 55,107 | 41.1% | 27 | 42% | 0M | 0M | 23 | 2.13% | Normal |
-| N3 Dormant | 57,872 | 43.1% | 32 | 42% | 3M | 0M | 0 | 5.13%* | Onboarding (Task 2) |
+| V3 Multi Premium | 798 | 0.5% | 36 | 59% | 18M | 551M | 42 | **11.17%** | VIP |
+| V1 HV Borrower | 10,309 | 6.5% | 35 | 35% | 879M | 0M | 14 | 4.56% | VIP |
+| V2 Conservative | 5,597 | 3.5% | 35 | 61% | 0M | 350M | 19 | 3.92% | VIP (Sleeping Dog) |
+| N1 Active Digital | 11,485 | 7.2% | 32 | 37% | 60M | 0M | 28 | **6.81%** | Normal |
+| N2 Semi Digital | 72,868 | 45.8% | 27 | 42% | 0M | 0M | 23 | 2.13% | Normal |
+| N3 Dormant | 57,872 | 36.4% | 32 | 42% | 3M | 0M | 0 | 5.13%* | Onboarding (Task 2) |
 
 *N3 buy rate từ lịch sử offline — không dùng cho NBFO targeting.
 

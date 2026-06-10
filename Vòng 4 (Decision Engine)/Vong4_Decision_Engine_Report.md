@@ -1,117 +1,112 @@
-# BÁO CÁO KẾT QUẢ VÒNG 4.2: DECISION ENGINE - IB ONLY SCENARIO
-**Đội thi:** GCON (Nguyễn Tiến Mạnh, Phạm Văn Linh, Trần Đức Lập)
+# BAO CAO KET QUA VONG 4.2: DECISION ENGINE - IB
+**Doi thi:** GCON (Nguyen Tien Manh, Pham Van Linh, Tran Duc Lap)
 
 ---
 
-## PHẦN 1: TỔNG QUAN KỊCH BẢN
+## 1. Muc tieu va population
 
-Theo yêu cầu thử nghiệm mới, Decision Engine được chạy lại với 2 thay đổi:
+Engine IB duoc dung cho bai toan cross-sell NBFO tren tap khach da co IB.
 
-1. **Loại hoàn toàn nhóm Non-IB khỏi phần tính toán.**
-2. **Giảm budget constraint từ 1,000,000,000 VND xuống 700,000,000 VND.**
-
-Luồng hệ thống sau khi loại Non-IB:
-
-```mermaid
-graph TD
-    A[(IB Customer Data)] -->|Product Ownership & Digital Activity| B(Rule-based IB Segmentation)
-    A -->|NBFO Model Scores| C(XGBoost NBFO Propensity)
-
-    B -->|V1/V2/V3/N1/N2/N3| D{Segment-Aware Decision Layer}
-    C -->|Product Probability| D
-
-    D -->|Probability + FUM| E[Expected Marginal Utility]
-    E -->|Segment x Channel Threshold| F((Budget Solver))
-    F -->|Budget <= 700M & Human Cap <= 10,000| G{Action Dispatcher}
-
-    G -->|SMS| H[SMS Gateway]
-    G -->|Telesales| I[CRM Telesales Queue]
-    G -->|RM| J[RM Queue]
-    G -->|None| K[Auto-Brake]
+```text
+Population: 124,886 khach IB
+Budget: 450,000,000 VND
+Human-touch cap: 6,000 luot Telesales/RM
+Objective: maximize total Expected Marginal Utility (EMU)
 ```
 
+Non-IB khong duoc dua vao file `final_allocations.csv`.
+
 ---
 
-## PHẦN 2: IB SEGMENTATION
+## 2. Segmentation IB
 
-IB được chia bằng rule cascade:
+IB segmentation duoc gan theo cohort va product profile. Rieng `N3_Dormant` phai tach theo cohort dang ky IB de tranh gan nham khach chua co IB trong snapshot 2019:
 
 ```python
-if login_count == 0:
-    segment = 'N3_Dormant'
-elif AVG_LOAN_AMOUNT > 500_000_000:
-    segment = 'V1_HV_Borrower'
-elif AVG_TD_BALANCE > 100_000_000 and has_loan == 0:
-    segment = 'V2_Conservative'
-elif product_depth >= 3 and AVG_TD_BALANCE > 200_000_000:
-    segment = 'V3_Multi_Premium'
-elif has_card == 1 and has_loan == 1:
-    segment = 'N1_Active_Digital'
-else:
-    segment = 'N2_Semi_Digital'
+if IB_REGISTER_DATE is missing:
+    return DEFAULT_SEGMENT
+if IB_REGISTER_DATE.year not in {2020, 2021} and login_count == 0:
+    return 'N3_Dormant'
+if AVG_LOAN_AMOUNT > 500_000_000:
+    return 'V1_HV_Borrower'
+if AVG_TD_BALANCE > 100_000_000 and has_loan == 0:
+    return 'V2_Conservative'
+if product_depth >= 3 and AVG_TD_BALANCE > 200_000_000:
+    return 'V3_Multi_Premium'
+if has_card == 1 and has_loan == 1:
+    return 'N1_Active_Digital'
+return 'N2_Semi_Digital'
 ```
 
-| Segment | Nhóm | Logic kinh doanh |
-|---|---|---|
-| V1_HV_Borrower | VIP | Dư nợ lớn, cơ hội cross-sell cao |
-| V2_Conservative | VIP | Gửi tiền lớn, không vay, cần tiếp cận thận trọng |
-| V3_Multi_Premium | VIP | Đa sản phẩm, tài sản cao |
-| N1_Active_Digital | Normal | Có loan + card, digital active |
-| N2_Semi_Digital | Normal | Có dùng IB nhưng chưa sâu |
-| N3_Dormant | Dormant | Đã có IB nhưng chưa active mạnh |
+Doc logic dormant:
+
+- Khach co `IB_REGISTER_DATE` trong nam 2019 tro ve truoc: neu `login_count = 0` thi duoc coi la `N3_Dormant`, vi tai thoi diem snapshot 2019 ho da co IB nhung khong phat sinh activity.
+- Khach co `IB_REGISTER_DATE` nam 2020 hoac 2021: khong dung `login_count = 0` cua snapshot 2019 de gan dormant, vi luc do khach chua dang ky IB nen zero-login chi la artifact.
+- Khach thieu `IB_REGISTER_DATE`: dua ve `DEFAULT_SEGMENT` thay vi gan dormant, de tranh silent error.
+
+`login_count` neu bi missing tung dong se fallback sang `ACTIVITY_NO_SUM`; neu van missing thi fill ve 0. Cach nay giup row co `login_count = NaN` khong bi rot khoi rule dormant mot cach am tham.
 
 ---
 
-## PHẦN 3: FINANCIAL UTILITY MATRIX
-
-Các số theo đề bài:
+## 3. Financial Utility Matrix
 
 | Segment | TP | FP | FN |
 |---|---:|---:|---:|
-| V1_HV_Borrower | +5,000,000 | -50,000 | -30,000,000 |
-| V2_Conservative | +5,000,000 | -50,000 | -30,000,000 |
-| V3_Multi_Premium | +5,000,000 | -50,000 | -30,000,000 |
-| N1_Active_Digital | +5,000,000 | -50,000 | 0 |
-| N2_Semi_Digital | +5,000,000 | -50,000 | 0 |
-| N3_Dormant | +5,000,000 | -50,000 | 0 |
+| V1_HV_Borrower | 5,000,000 | -50,000 | -30,000,000 |
+| V2_Conservative | 5,000,000 | -50,000 | -30,000,000 |
+| V3_Multi_Premium | 5,000,000 | -50,000 | -30,000,000 |
+| N1_Active_Digital | 5,000,000 | -50,000 | 0 |
+| N2_Semi_Digital | 5,000,000 | -50,000 | 0 |
+| N3_Dormant | 5,000,000 | -50,000 | 0 |
+
+Cong thuc EMU:
+
+```text
+uplift_c(P) = 4 * P * (1 - P) * CR_c
+EMU_c(P) = uplift_c(P) * (TP - FN)
+           + (1 - P - uplift_c(P)) * FP
+           - channel_cost_c
+```
 
 ---
 
-## PHẦN 4: CÔNG THỨC EMU
+## 4. MILP Solver
 
-Engine dùng công thức expected-FP:
+Thay vi sap xep uu tien theo EMU/efficiency, allocation duoc dua ve bai toan Mixed Integer Linear Programming.
 
-$$
-Uplift_c(P) = 4 \times P \times (1-P) \times CR_c
-$$
+Bien quyet dinh:
 
-$$
-EMU_c(P) = Uplift_c(P) \times (TP - FN) + (1 - P - Uplift_c(P)) \times FP - Cost_c
-$$
+```text
+x[i,c] = 1 neu khach i duoc gan kenh c
+x[i,c] = 0 neu khong
+```
 
-Điểm quan trọng: `FP` không được cộng full cho mọi khách. FP phải được nhân với xác suất thật sự rơi vào false-positive state.
+Objective:
+
+```text
+maximize sum_i sum_c EMU[i,c] * x[i,c]
+```
+
+Constraints:
+
+```text
+sum_c x[i,c] <= 1                         moi khach toi da 1 kenh
+sum_i sum_c cost[c] * x[i,c] <= 450M       budget constraint
+sum_i (x[i,Telesales] + x[i,RM]) <= 6,000  human-touch cap
+x[i,c] = 0 neu channel khong eligible hoac EMU <= 0
+```
+
+Solver: `scipy.optimize.milp` voi HiGHS. Ket qua baseline va stress deu tra ve optimal.
 
 ---
 
-## PHẦN 5: CHANNEL & CONSTRAINTS
+## 5. Channel va threshold
 
-| Kênh | Cost | CR tham khảo | Constraint |
+| Kenh | Cost | CR | Constraint |
 |---|---:|---:|---|
-| SMS | 5,000 | 2% | Không giới hạn |
-| Telesales | 50,000 | 5% | Thuộc human cap |
-| RM | 2,000,000 | 15% giả định | Thuộc human cap, VIP only |
-
-Ràng buộc mới:
-
-| Constraint | Giá trị |
-|---|---:|
-| Budget | 700,000,000 VND |
-| Human-touch capacity | 10,000 lượt |
-| Population | IB only |
-
----
-
-## PHẦN 6: THRESHOLD MATRIX
+| SMS | 5,000 | 2% | Khong gioi han |
+| Telesales | 50,000 | 5% | Thuoc human cap |
+| RM | 2,000,000 | 15% | Thuoc human cap, VIP only |
 
 | Segment | SMS | Telesales | RM |
 |---|---:|---:|---:|
@@ -122,98 +117,88 @@ Ràng buộc mới:
 | N2_Semi_Digital | 0.1382 | 0.1048 | N/A |
 | N3_Dormant | 0.1382 | 0.1048 | N/A |
 
-Khi FP được chuẩn hóa về spam cost `-50,000`, VIP không còn bị phạt quá nặng. RM threshold giảm xuống 10.92% và bắt đầu được mở cho một nhóm nhỏ khách VIP.
+Budget va human cap hien tai duoc chon tu coarse-to-refine grid search tren tong budget 1B:
+
+```text
+Coarse budget: 400/600, 500/500, 600/400 voi human 5000/5000
+Refine quanh coarse best 500/500: 450/550, 500/500, 550/450
+Human refine: 4000/6000, 5000/5000, 6000/4000
+Best normalized score: IB 450M / Non-IB 550M, human 6000 / 4000
+```
 
 ---
 
-## PHẦN 7: BASELINE ALLOCATION - IB ONLY, BUDGET 700M
+## 6. Baseline Result
 
-| Metric | Kết quả |
+MILP status: optimal.
+
+| Metric | Ket qua |
 |---|---:|
-| Tổng khách trong engine | 124,886 |
-| IB | 124,886 |
-| Non-IB | 0 |
-| Profit kỳ vọng | 2,614,142,732 VND |
-| Cost | 648,870,000 VND |
-| Budget limit | 700,000,000 VND |
-| SMS | 20,024 |
-| Telesales | 9,975 |
-| RM | 25 |
-| None / Auto-brake | 94,862 |
-| Human-touch used | 10,000 |
+| Total customers | 124,886 |
+| Profit / EMU ky vong | 5,109,748,849 VND |
+| Cost | 448,655,000 VND |
+| Budget limit | 450,000,000 VND |
+| SMS | 27,401 |
+| Telesales | 5,993 |
+| RM | 6 |
+| None / Auto-brake | 91,486 |
+| Human-touch used | 5,999 |
 
-### Đọc kết quả
+Doc ket qua:
 
-1. **Loại Non-IB không làm đổi population ngoài IB**: output hiện chỉ còn 124,886 khách IB.
-2. **Budget 700M chưa binding** vì tổng cost là 648.87M.
-3. **Human cap binding** vì Telesales + RM = 10,000 lượt.
-4. **RM đã mở 25 slot** sau khi FP được đưa về spam cost -50K.
+- Budget gan binding: solver dung 448.655M / 450M.
+- Human cap gan binding: Telesales + RM = 5,999 / 6,000.
+- RM chi con 6 slot vi budget IB giam tu 700M xuong 450M; solver uu tien Telesales/SMS co EMU tren chi phi tot hon.
+- EMU van duy tri 5.11 ty VND nho human cap IB tang len 6,000.
 
 ---
 
-## PHẦN 8: OUTPUT SAMPLE
+## 7. Stress Test
 
-| CUSTOMER_NUMBER | CUSTOMER_TYPE | SEGMENT_CLUSTER | MAPPED_IB_SEGMENT | RECOMMENDED_PRODUCT | PROBABILITY | CHANNEL |
-|---:|---|---|---|---|---:|---|
-| 0 | IB | N3_Dormant | N3_Dormant | TERM_DEPOSIT | 0.003600 | None |
-| 3 | IB | N3_Dormant | N3_Dormant | TERM_DEPOSIT | 0.003345 | None |
-| 9 | IB | N3_Dormant | N3_Dormant | CREDIT_CARD | 0.015592 | None |
-| 13 | IB | N3_Dormant | N3_Dormant | CURRENT_ACCOUNT | 0.272227 | SMS |
-| 14 | IB | N3_Dormant | N3_Dormant | CURRENT_ACCOUNT | 0.345532 | SMS |
+Kich ban stress:
 
----
+```text
+FP VIP +20%
+CR Telesales/RM -15%
+```
 
-## PHẦN 9: STRESS TEST
-
-Kịch bản theo đề:
-
-- FP VIP tăng 20%.
-- CR của Kênh 2 và Kênh 3 giảm 15%.
+Stress test giu nguyen allocation baseline va chi tinh lai EMU voi adverse assumptions. Cach nay do sensitivity cua phuong an da chon, khong cho solver doi channel mix trong stress.
 
 | Metric | Baseline | Stress |
 |---|---:|---:|
-| Profit | 2,614,142,732 | 2,227,659,698 |
-| Cost | 648,870,000 | 644,670,000 |
-| SMS | 20,024 | 19,964 |
-| Telesales | 9,975 | 9,977 |
-| RM | 25 | 23 |
+| Profit / EMU | 5,109,748,849 | 4,423,648,060 |
+| Cost | 448,655,000 | 448,655,000 |
+| SMS | 27,401 | 27,401 |
+| Telesales | 5,993 | 5,993 |
+| RM | 6 | 6 |
+| Human-touch used | 5,999 | 5,999 |
 
-Profit giảm vì EMU của Telesales/RM bị giảm theo CR, dù nghiệm phân bổ vẫn giữ nguyên trong policy baseline.
-
----
-
-## PHẦN 10: HEATMAP
-
-### Profit matrix
-
-| FP VIP / CR Kênh 2&3 | -5% CR | -10% CR | -15% CR | -20% CR |
-|---|---:|---:|---:|---:|
-| +10% FP | 2.485 tỷ | 2.357 tỷ | 2.229 tỷ | 2.101 tỷ |
-| +20% FP | 2.484 tỷ | 2.356 tỷ | 2.228 tỷ | 2.100 tỷ |
-| +30% FP | 2.483 tỷ | 2.355 tỷ | 2.227 tỷ | 2.099 tỷ |
-| +40% FP | 2.482 tỷ | 2.354 tỷ | 2.226 tỷ | 2.098 tỷ |
-
-### RM slots matrix
-
-| FP VIP / CR Kênh 2&3 | -5% CR | -10% CR | -15% CR | -20% CR |
-|---|---:|---:|---:|---:|
-| +10% FP | 24 | 24 | 23 | 19 |
-| +20% FP | 24 | 24 | 23 | 19 |
-| +30% FP | 24 | 24 | 23 | 19 |
-| +40% FP | 24 | 24 | 23 | 19 |
-
-Heatmap cho thấy profit nhạy mạnh với CR của Kênh 2/3. RM slots giảm từ 24 xuống 19 khi CR Kênh 2/3 giảm từ 5% xuống 20%, phản ánh engine rút dần kênh đắt khi hiệu quả kênh yếu đi.
+Stress EMU giam 13.4%, nhung portfolio baseline van duong lon va channel mix khong doi.
 
 ---
 
-## PHẦN 11: KẾT LUẬN
+## 8. Output
 
-Trong kịch bản IB-only với budget 700M:
+File output chinh:
 
-- Engine chỉ còn xử lý 124,886 khách IB.
-- Non-IB đã được loại hoàn toàn khỏi `final_allocations.csv`.
-- Budget 700M vẫn đủ cho nghiệm hiện tại vì cost là 648.87M.
-- Ràng buộc thực sự binding là human-touch cap 10,000 lượt.
-- Sau khi FP được đưa về -50K, RM được mở lại cho 25 khách VIP và profit baseline tăng lên 2.61 tỷ.
+```text
+final_allocations.csv
+```
 
-Kịch bản này phù hợp nếu ban lãnh đạo muốn tập trung hoàn toàn vào cross-sell NBFO cho khách đã có IB, thay vì trộn thêm bài toán kích hoạt Non-IB.
+Cot chinh:
+
+```text
+CUSTOMER_NUMBER
+CUSTOMER_TYPE
+SEGMENT_CLUSTER
+MAPPED_IB_SEGMENT
+RECOMMENDED_PRODUCT
+PROBABILITY
+RECOMMENDED_CHANNEL
+```
+
+---
+
+## 9. Ket luan
+
+IB decision engine hien tai khong con la heuristic sorting don thuan. Allocation da duoc solve bang MILP voi objective EMU va cac rang buoc da kenh: budget, human cap, eligibility, va one-channel-per-customer. Sau grid search, IB duoc cap 450M budget va 6,000 human contacts; baseline dat EMU ky vong 5.11 ty VND.

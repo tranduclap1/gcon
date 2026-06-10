@@ -9,15 +9,15 @@
 
 ### Kết quả Conversion Rate theo Persona:
 
-| Persona                          |   Converted_to_IB |   Remained_Non_IB |   Total_Historical_Pool |   Real_Onboarding_Rate (%) |
-|:---------------------------------|------------------:|------------------:|------------------------:|---------------------------:|
-| Senior High-Value Heavy Borrower |              6315 |               562 |                    6877 |                      91.83 |
-| High-Value Heavy Borrower        |              6974 |               653 |                    7627 |                      91.44 |
-| High-Value Traditional           |              1751 |               493 |                    2244 |                      78.03 |
-| Dormant / Ngủ đông               |             16506 |             24570 |                   41076 |                      40.18 |
-| Senior High-Value Saver          |              1650 |              7504 |                    9154 |                      18.02 |
-| High-Value Saver                 |              2440 |             13180 |                   15620 |                      15.62 |
-| Traditional                      |              9572 |             80041 |                   89613 |                      10.68 |
+| Persona                          | Converted_to_IB | Remained_Non_IB | Total_Historical_Pool | Real_Onboarding_Rate (%) |
+| -------------------------------- | --------------- | --------------- | --------------------- | ------------------------ |
+| Senior High-Value Heavy Borrower | 6315            | 562             | 6877                  | 91.83                    |
+| High-Value Heavy Borrower        | 6974            | 653             | 7627                  | 91.44                    |
+| High-Value Traditional           | 1751            | 493             | 2244                  | 78.03                    |
+| Dormant / Ngủ đông               | 16989           | 24570           | 41559                 | 40.88                    |
+| Senior High-Value Saver          | 1650            | 7504            | 9154                  | 18.02                    |
+| High-Value Saver                 | 2440            | 13180           | 15620                 | 15.62                    |
+| Traditional                      | 9571            | 80041           | 89612                 | 10.68                    |
 
 **Kết luận & Insight:**
 - Phương pháp này bắt được chính xác hành vi của khách hàng ngay trước khi họ "bị thuyết phục" cài App.
