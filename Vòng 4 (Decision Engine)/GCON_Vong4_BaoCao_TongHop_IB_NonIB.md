@@ -31,6 +31,28 @@ Tổng ngân sách chiến dịch là 1 tỷ VND, được phân bổ sau grid s
 | Non-IB | 550,000,000 VND | 4,000 lượt |
 | Tổng | 1,000,000,000 VND | 10,000 lượt |
 
+### 1.1 Grid search phân bổ budget và human-touch
+
+Trước khi chạy MILP cho từng nhánh, đội thực hiện coarse-to-refine grid search để chọn cách chia ngân sách và năng lực human-touch giữa IB và Non-IB. Objective của grid search là cân bằng hiệu quả hai bài toán:
+
+```text
+Score = 0.5 * normalized IB EMU + 0.5 * normalized Non-IB EMU
+```
+
+Cấu hình tốt nhất trong grid search:
+
+| Stage | IB Budget | Non-IB Budget | IB Human | Non-IB Human | IB EMU | Non-IB EMU | Normalized Score |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| refine | 450M | 550M | 6,000 | 4,000 | 5.11B | 23.84B | 0.7451 |
+
+Cấu hình này được chọn vì ba lý do chính:
+
+- IB cần nhiều human-touch hơn để khai thác tập khách đã có digital relationship và propensity cross-sell rõ hơn.
+- Non-IB được cấp budget lớn hơn vì bài toán retention có population at-risk lớn và giá trị giữ chân cao.
+- Score được chuẩn hóa giữa hai nhánh, nên phương án được chọn không chỉ tối đa hóa riêng IB hoặc riêng Non-IB mà cân bằng cả cross-sell và retention.
+
+Lưu ý: grid search dùng để chọn cấu hình budget/human cap. EMU Non-IB chính thức trong baseline là 19.31B, được tính trên allocation cuối cùng của engine Non-IB.
+
 Kết quả baseline:
 
 | Metric | IB | Non-IB | Tổng |
@@ -160,23 +182,45 @@ VIP-like segment có threshold thấp hơn vì FN lớn: bỏ lỡ khách giá t
 
 ### 4.4 Tối ưu MILP
 
-IB allocation được giải bằng MILP ở cấp customer-channel.
+IB allocation được mô hình hóa ở cấp `customer-channel`. Với mỗi khách `i` và kênh `c`, biến quyết định là:
 
 ```text
 x[i,c] = 1 nếu khách i được gán kênh c
 x[i,c] = 0 nếu không
-
-maximize sum_i sum_c EMU[i,c] * x[i,c]
 ```
 
-Ràng buộc:
+Hàm mục tiêu vẫn là tối đa hóa tổng EMU kỳ vọng:
 
 ```text
-sum_c x[i,c] <= 1                         mỗi khách tối đa một kênh
-sum_i sum_c cost[c] * x[i,c] <= 450M       ngân sách IB
-sum_i (x[i,Telesales] + x[i,RM]) <= 6,000  human-touch cap
-x[i,c] = 0 nếu channel không eligible hoặc EMU <= 0
+maximize  Σ_i Σ_c EMU[i,c] * x[i,c]
 ```
+
+Các constraints chính:
+
+```text
+Σ_c x[i,c] <= 1
+```
+
+Mỗi khách chỉ được nhận tối đa một kênh tiếp cận. Constraint này tránh việc một khách bị tính nhiều action cùng lúc, ví dụ vừa nhận SMS vừa được gọi Telesales.
+
+```text
+Σ_i Σ_c cost[c] * x[i,c] <= 450,000,000
+```
+
+Tổng COGS của toàn bộ chiến dịch IB không vượt ngân sách 450M VND. Vì mỗi channel có cost khác nhau, constraint này buộc mô hình cân bằng giữa số lượng khách tiếp cận và giá trị kỳ vọng của từng kênh.
+
+```text
+Σ_i (x[i,Telesales] + x[i,RM]) <= 6,000
+```
+
+Telesales và RM là hai kênh cần nhân sự xử lý, nên được gom vào cùng một giới hạn human-touch. Dù budget còn dư, mô hình vẫn không thể phân bổ quá 6,000 lượt cần can thiệp thủ công.
+
+```text
+x[i,c] = 0 nếu EMU[i,c] <= 0
+x[i,c] = 0 nếu khách i không eligible với kênh c
+```
+
+Các cặp customer-channel có EMU âm hoặc không đạt threshold theo segment sẽ bị khóa về 0. Đây là constraint auto-brake, giúp engine không cố tiêu budget cho những khách/kênh có utility kỳ vọng không đủ tốt.
 
 ### 4.5 Kết quả IB
 
@@ -308,22 +352,51 @@ Threshold:
 
 ### 5.5 Tối ưu MILP
 
-Non-IB có nhiều khách trong cùng cluster có cùng `P_CHURN`, `TP`, `FP`, `FN`, nên MILP được solve ở cấp cluster-channel bằng biến nguyên.
+Non-IB được tối ưu ở cấp `cluster-channel` vì các khách trong cùng cluster có cùng risk/utility theo kênh. Biến quyết định là:
 
 ```text
 y[g,c] = số khách cluster g được gán kênh c
-
-maximize sum_g sum_c EMU[g,c] * y[g,c]
 ```
 
-Ràng buộc:
+Hàm mục tiêu là tối đa hóa EMU giữ chân:
 
 ```text
-sum_c y[g,c] <= AT_RISK_CUSTOMERS[g]          không vượt số khách at-risk
-sum_g sum_c cost[c] * y[g,c] <= 550M          ngân sách Non-IB
-sum_g (y[g,Telesales] + y[g,RM]) <= 4,000     human-touch cap
+maximize  Σ_g Σ_c EMU[g,c] * y[g,c]
+```
+
+Các constraints chính:
+
+```text
+Σ_c y[g,c] <= AT_RISK_CUSTOMERS[g]
+```
+
+Số khách được phân bổ action trong mỗi cluster không vượt quá số khách at-risk của cluster đó. Constraint này giữ allocation nằm trong tập khách thật sự cần can thiệp.
+
+```text
+Σ_g Σ_c cost[c] * y[g,c] <= 550,000,000
+```
+
+Tổng COGS của chiến dịch Non-IB không vượt ngân sách 550M VND.
+
+```text
+Σ_g (y[g,Telesales] + y[g,RM]) <= 4,000
+```
+
+Telesales và RM dùng chung giới hạn human-touch 4,000 lượt. Constraint này phản ánh năng lực vận hành, không chỉ giới hạn chi phí.
+
+```text
+0 <= y[g,c] <= AT_RISK_CUSTOMERS[g]
+y[g,c] là số nguyên
 y[g,c] = 0 nếu EMU[g,c] <= 0 hoặc channel không eligible
 ```
+
+Vì `y[g,c]` là số khách, biến phải là số nguyên và không âm. Các channel không có EMU dương hoặc không phù hợp với cluster sẽ không được chọn.
+
+```text
+Σ_g y[g,RM] >= MIN_RM_ALLOCATIONS
+```
+
+Non-IB có thêm constraint tối thiểu cho RM để đảm bảo nhóm khách high-value vẫn có một lượng chăm sóc chuyên sâu. Nếu không có constraint này, mô hình có thể nghiêng quá mạnh về SMS/Telesales do RM có chi phí cao.
 
 ### 5.6 Kết quả Non-IB
 
@@ -386,31 +459,7 @@ Non-IB engine ổn định hơn IB trong stress test vì phần lớn allocation
 
 ---
 
-## 6. Tối ưu ngân sách IB và Non-IB
-
-Ngân sách 1 tỷ VND được phân bổ bằng coarse-to-refine grid search. Objective là cân bằng hai nhánh:
-
-```text
-Score = 0.5 * normalized IB EMU + 0.5 * normalized Non-IB EMU
-```
-
-Kết quả tốt nhất:
-
-| Stage | IB Budget | Non-IB Budget | IB Human | Non-IB Human | IB EMU | Non-IB EMU | Normalized Score |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| refine | 450M | 550M | 6,000 | 4,000 | 5.11B | 23.84B | 0.7451 |
-
-Lưu ý: bảng grid search gốc được dùng để chọn cấu hình budget/human cap. EMU Non-IB chính thức trong báo cáo baseline là 19.31B, được tính trên allocation cuối cùng của engine Non-IB.
-
-Lý do chọn phương án 450M/550M:
-
-- Tăng human cap cho IB giúp khai thác tốt tập khách có digital relationship sẵn có.
-- Non-IB được cấp budget lớn hơn vì retention TP cao và population at-risk lớn.
-- Tổng score cân bằng giữa cross-sell và retention thay vì tối đa hóa một nhánh duy nhất.
-
----
-
-## 7. Dự báo revenue và cost
+## 6. Dự báo revenue và cost
 
 Trong framework này, `TP`, `FN`, `FP` và `channel_cost` được quy đổi thành Expected Marginal Utility. Có thể đọc kết quả theo góc nhìn revenue và COGS như sau:
 
@@ -444,7 +493,7 @@ Diễn giải business:
 
 ---
 
-## 8. Ý nghĩa kinh doanh
+## 7. Ý nghĩa kinh doanh
 
 ### 8.1 Từ prediction sang decision
 
@@ -477,7 +526,7 @@ Mỗi quyết định có thể giải thích bằng:
 
 ---
 
-## 9. Khuyến nghị triển khai
+## 8. Khuyến nghị triển khai
 
 ### 9.1 Cho IB
 
@@ -502,7 +551,7 @@ Mỗi quyết định có thể giải thích bằng:
 
 ---
 
-## 10. Output và file liên quan
+## 9. Output và file liên quan
 
 | File | Vai trò |
 |---|---|
@@ -528,7 +577,7 @@ Output customer-level nằm ở folder gốc project:
 
 ---
 
-## 11. Kết luận
+## 10. Kết luận
 
 Giải pháp Vòng 4 của GCON xây dựng một decision engine hoàn chỉnh cho ngân hàng số, kết hợp NBFO, persona segmentation, churn prevention và tối ưu hóa nguồn lực. Điểm cốt lõi là chuyển prediction thành action: mỗi khách được đánh giá theo probability/risk, giá trị tài chính, chi phí kênh và ràng buộc vận hành.
 
