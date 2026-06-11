@@ -25,7 +25,7 @@ channels = {
 channel_names = np.array(['SMS', 'Telesales', 'RM'])
 channel_costs = np.array([channels[ch]['cost'] for ch in channel_names])
 
-VIP_CLUSTERS = {1, 2, 3, 4, 6, 7}
+VIP_CLUSTERS = {1, 2, 3, 4, 5, 6, 7}
 FN_BY_CLUSTER = {cluster: (-30_000_000 if cluster in VIP_CLUSTERS else 0) for cluster in NONIB_CLUSTER_NAMES}
 
 

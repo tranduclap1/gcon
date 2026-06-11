@@ -37,7 +37,7 @@ HUMAN_MASK = np.array([0, 1, 1])
 TP_RETENTION = 50_000_000
 FP_CONTACT = -50_000
 RUNOFF_WEIGHT = 0.30
-VIP_CLUSTERS = {1, 2, 3, 4, 6, 7}
+VIP_CLUSTERS = {1, 2, 3, 4, 5, 6, 7}
 FN_BY_CLUSTER = {cluster: (-30_000_000 if cluster in VIP_CLUSTERS else 0) for cluster in NONIB_CLUSTER_NAMES}
 
 

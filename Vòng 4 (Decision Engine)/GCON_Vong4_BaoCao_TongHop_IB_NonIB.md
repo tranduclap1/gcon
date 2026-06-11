@@ -21,7 +21,7 @@ Hệ thống được chia thành hai nhánh:
 | Nhánh | Population | Bài toán | Mục tiêu tối ưu |
 |---|---:|---|---|
 | IB | 124,886 khách đã có Internet Banking | Cross-sell NBFO | Tối đa Expected Marginal Utility từ việc chọn sản phẩm và kênh tiếp cận |
-| Non-IB | 127,003 khách chưa có IB | Retention/churn prevention | Tối đa EMU giữ chân trên nhóm có rủi ro rời bỏ |
+| Non-IB | 127,000 khách chưa có IB | Retention/churn prevention | Tối đa EMU giữ chân trên nhóm có rủi ro rời bỏ |
 
 Tổng ngân sách chiến dịch là 1 tỷ VND, được phân bổ sau grid search:
 
@@ -51,15 +51,15 @@ Cấu hình này được chọn vì ba lý do chính:
 - Non-IB được cấp budget lớn hơn vì bài toán retention có population at-risk lớn và giá trị giữ chân cao.
 - Score được chuẩn hóa giữa hai nhánh, nên phương án được chọn không chỉ tối đa hóa riêng IB hoặc riêng Non-IB mà cân bằng cả cross-sell và retention.
 
-Lưu ý: grid search dùng để chọn cấu hình budget/human cap. EMU Non-IB chính thức trong baseline là 19.31B, được tính trên allocation cuối cùng của engine Non-IB.
+Lưu ý: grid search dùng để chọn cấu hình budget/human cap. EMU Non-IB chính thức trong baseline là 22.91B, được tính trên allocation cuối cùng của engine Non-IB.
 
 Kết quả baseline:
 
 | Metric | IB | Non-IB | Tổng |
 |---|---:|---:|---:|
-| Population | 124,886 | 127,003 | 251,889 |
+| Population | 124,886 | 127,000 | 251,886 |
 | Cost/COGS chiến dịch | 448,655,000 | 550,000,000 | 998,655,000 |
-| EMU kỳ vọng | 5,109,748,849 | 19,311,810,610 | 24,421,559,459 |
+| EMU kỳ vọng | 5,109,748,849 | 22,910,966,121 | 28,020,714,970 |
 | SMS | 27,401 | 66,680 | 94,081 |
 | Telesales | 5,993 | 292 | 6,285 |
 | RM | 6 | 101 | 107 |
@@ -102,6 +102,21 @@ Kênh tiếp cận chung:
 | SMS | 5,000 VND | 2% | Kênh scale, chi phí thấp |
 | Telesales | 50,000 VND | 5% | Kênh human-touch cho khách cần tư vấn |
 | RM | 2,000,000 VND | 15% | Kênh cao cấp cho nhóm VIP/high value |
+
+### 3.1 Tiêu chí chia nhóm IB
+
+IB segmentation được gán bằng rule-based profile để đảm bảo dễ giải thích trong vận hành. Rule được xét theo thứ tự ưu tiên từ trên xuống: nếu khách thỏa một điều kiện sớm hơn thì được gán vào segment đó.
+
+| Segment | Ý nghĩa business | Tiêu chí gán nhóm |
+|---|---|---|
+| V1_HV_Borrower | Khách vay giá trị cao, có tiềm năng cross-sell và cần chăm sóc kỹ | `AVG_LOAN_AMOUNT > 500M` |
+| V2_Conservative | Khách có số dư tiền gửi cao, thiên về an toàn | `AVG_TD_BALANCE > 100M` và `has_loan = 0` |
+| V3_Multi_Premium | Khách đa sản phẩm, giá trị cao | `product_depth >= 3` và `AVG_TD_BALANCE > 200M` |
+| N1_Active_Digital | Khách digital active, có thể tiếp cận bằng kênh số/human | `has_card = 1` và `has_loan = 1` sau khi không thuộc V1/V2/V3 |
+| N2_Semi_Digital | Khách dùng số vừa phải, cần kích hoạt thêm | Nhóm còn lại: đã có tín hiệu IB nhưng chưa đủ điều kiện vào các nhóm trên |
+| N3_Dormant | Khách đã có IB nhưng không phát sinh login | Với khách đã đăng ký IB trước 2020: `login_count = 0` |
+
+Lưu ý cohort: với khách đăng ký IB trong 2020/2021, `login_count = 0` trong snapshot 2019 được xem là artifact thời gian, nên không tự động gán Dormant. Với khách đã có IB trước 2020, `login_count = 0` là tín hiệu dormant thật.
 
 Công thức EMU chung:
 
@@ -271,8 +286,8 @@ EMU giảm 13.4% nhưng vẫn dương lớn, cho thấy allocation IB có khả 
 Non-IB engine chuyển bài toán từ activation/onboarding sang retention. Lý do là nhóm chưa có IB vẫn có giá trị tài chính ngoài kênh số; mục tiêu quan trọng là giữ chân các khách có rủi ro rời bỏ trước khi đề xuất adoption IB.
 
 ```text
-Population: 127,003 khách Non-IB
-At-risk base: 77,827 khách
+Population: 127,000 khách Non-IB
+At-risk base: 77,824 khách
 Budget: 550,000,000 VND
 Human-touch cap: 4,000 lượt Telesales/RM
 Objective: maximize expected retention EMU
@@ -298,12 +313,12 @@ Vì runoff risk không chắc chắn là churn thật sự, engine chỉ tính n
 | Cluster | At Risk | Hard Churn | Runoff Risk | Effective Churn | P Churn |
 |---|---:|---:|---:|---:|---:|
 | C3_Ultra_Saver | 393 | 229 | 25 | 236.5 | 60.18% |
-| C5_HV_Saver | 10,544 | 1,325 | 1,618 | 1,810.4 | 17.17% |
+| C5_HV_Saver | 10,542 | 1,325 | 1,618 | 1,810.4 | 17.17% |
 | C4_Multi_Saver | 591 | 21 | 260 | 99.0 | 16.75% |
 | C2_Senior_HV | 511 | 44 | 103 | 74.9 | 14.66% |
 | C1_HV_Traditional | 470 | 12 | 80 | 36.0 | 7.66% |
-| C0_Traditional | 59,864 | 2,198 | 5,775 | 3,930.5 | 6.57% |
-| C6_Stable_Senior | 4,858 | 47 | 541 | 209.3 | 4.31% |
+| C0_Traditional | 59,861 | 2,198 | 5,775 | 3,930.5 | 6.57% |
+| C6_Stable_Senior | 4,860 | 47 | 541 | 209.3 | 4.31% |
 | C7_HV_Borrower | 596 | 0 | 70 | 21.0 | 3.52% |
 | P0_Dormant | 0 | 0 | 0 | 0.0 | 0.10% |
 
@@ -332,6 +347,7 @@ C1_HV_Traditional
 C2_Senior_HV
 C3_Ultra_Saver
 C4_Multi_Saver
+C5_HV_Saver
 C6_Stable_Senior
 C7_HV_Borrower
 ```
@@ -341,7 +357,7 @@ Threshold:
 | Cluster | SMS | Telesales | RM |
 |---|---:|---:|---:|
 | C3_Ultra_Saver | 0.0087 | 0.0063 | 0.0447 |
-| C5_HV_Saver | 0.0138 | 0.0101 | N/A |
+| C5_HV_Saver | 0.0087 | 0.0063 | 0.0447 |
 | C4_Multi_Saver | 0.0087 | 0.0063 | 0.0447 |
 | C2_Senior_HV | 0.0087 | 0.0063 | 0.0447 |
 | C1_HV_Traditional | 0.0087 | 0.0063 | 0.0447 |
@@ -402,19 +418,19 @@ Non-IB có thêm constraint tối thiểu cho RM để đảm bảo nhóm khách
 
 | Metric | Kết quả |
 |---|---:|
-| Population | 127,003 |
-| At-risk base | 77,827 |
+| Population | 127,000 |
+| At-risk base | 77,824 |
 | Hard churn proxy | 3,876 |
 | Runoff risk proxy | 8,472 |
 | Effective churn score | 6,417.6 |
 | SMS allocated | 66,680 |
 | Telesales | 292 |
 | RM | 101 |
-| None | 59,930 |
+| None | 59,927 |
 | Cost/COGS | 550,000,000 VND |
-| Campaign EMU | 19,311,810,610 VND |
-| Expected retained customers | 422.81 |
-| CLV at risk targeted | 116,585,411,994 VND |
+| Campaign EMU | 22,910,966,121 VND |
+| Expected retained customers | 422.82 |
+| CLV at risk targeted | 116,589,517,118 VND |
 | Human-touch used | 393 / 4,000 |
 
 Budget binding:
@@ -428,34 +444,27 @@ Budget binding:
 | Cluster | N | SMS | Telesales | RM | None | Cost | EMU |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | C3_Ultra_Saver | 912 | 0 | 292 | 101 | 519 | 216.60M | 2,058.4M |
-| C5_HV_Saver | 13,180 | 10,544 | 0 | 0 | 2,636 | 52.72M | 5,514.8M |
+| C5_HV_Saver | 13,178 | 10,542 | 0 | 0 | 2,636 | 52.71M | 9,113.5M |
 | C4_Multi_Saver | 800 | 591 | 0 | 0 | 209 | 2.96M | 500.2M |
 | C2_Senior_HV | 562 | 511 | 0 | 0 | 51 | 2.56M | 385.0M |
 | C1_HV_Traditional | 493 | 470 | 0 | 0 | 23 | 2.35M | 188.8M |
-| C0_Traditional | 80,041 | 49,706 | 0 | 0 | 30,335 | 248.53M | 9,638.7M |
-| C6_Stable_Senior | 5,792 | 4,858 | 0 | 0 | 934 | 24.29M | 1,025.9M |
+| C0_Traditional | 80,038 | 49,706 | 0 | 0 | 30,332 | 248.53M | 9,639.2M |
+| C6_Stable_Senior | 5,794 | 4,860 | 0 | 0 | 934 | 24.30M | 1,025.8M |
 | C7_HV_Borrower | 653 | 0 | 0 | 0 | 653 | 0 | 0 |
 | P0_Dormant | 24,570 | 0 | 0 | 0 | 24,570 | 0 | 0 |
 
 ### 5.8 Stress test Non-IB
 
-Kịch bản stress:
+Stress test Non-IB được chạy lại MILP riêng cho từng kịch bản, không chỉ re-score allocation baseline.
 
-```text
-FP +20%
-CR Telesales/RM -15%
-```
+| Scenario | COGS | EMU | Expected retained | SMS | Telesales | RM | Incremental ROI |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Baseline | 550.00M | 22.91B | 422.82 | 66,680 | 292 | 101 | 40.66x |
+| Adverse CR/FP re-optimized | 550.00M | 21.96B | 418.54 | 66,680 | 292 | 101 | 38.93x |
+| Budget cut -20% | 440.00M | 18.64B | 314.85 | 44,680 | 292 | 101 | 41.37x |
+| SMS CR -25% | 550.00M | 18.14B | 276.58 | 30,610 | 3,899 | 101 | 31.97x |
 
-| Metric | Baseline | Stress |
-|---|---:|---:|
-| EMU | 19,311,810,610 | 18,360,141,863 |
-| Delta EMU | - | -4.9% |
-| Cost/COGS | 550,000,000 | 550,000,000 |
-| SMS | 66,680 | 66,680 |
-| Telesales | 292 | 292 |
-| RM | 101 | 101 |
-
-Non-IB engine ổn định hơn IB trong stress test vì phần lớn allocation nằm ở SMS và các cluster có churn risk cao.
+Insight chính: khi SMS conversion giảm 25%, chiến lược tối ưu mới chuyển bớt scale từ SMS sang Telesales. Khi budget bị cắt 20%, solver cắt SMS trước vì đây là channel scale linh hoạt nhất, trong khi vẫn giữ RM minimum cho nhóm VIP/high-value.
 
 ---
 
@@ -472,18 +481,41 @@ Bảng tổng hợp:
 | Nhánh | Giá trị kinh doanh chính | Cost | EMU kỳ vọng |
 |---|---|---:|---:|
 | IB | Cross-sell NBFO trên khách đã có IB | 448.655M | 5.110B |
-| Non-IB | Giữ chân khách at-risk, bảo vệ CLV | 550.000M | 19.312B |
-| Tổng | Cross-sell + retention | 998.655M | 24.422B |
+| Non-IB | Giữ chân khách at-risk, bảo vệ CLV | 550.000M | 22.911B |
+| Tổng | Cross-sell + retention | 998.655M | 28.021B |
 
-Expected retained customers của Non-IB là 422.81 khách. Với IB, output là allocation cross-sell theo xác suất sản phẩm và channel; giá trị kỳ vọng được phản ánh trực tiếp trong EMU 5.11B.
+Expected retained customers của Non-IB là 422.82 khách. Với IB, output là allocation cross-sell theo xác suất sản phẩm và channel; giá trị kỳ vọng được phản ánh trực tiếp trong EMU 5.11B.
+
+### 6.1 KPI bắt buộc cho Pitch Deck
+
+CAC được tính bằng `COGS / expected conversions`. Incremental ROI được tính bằng `(EMU - COGS) / COGS`.
+
+| Nhánh | COGS | EMU | Expected conversions | CAC | Incremental ROI | EMU/COGS |
+|---|---:|---:|---:|---:|---:|---:|
+| IB | 448.655M | 5.110B | 629.04 | 0.713M | 10.39x | 11.39x |
+| Non-IB | 550.000M | 22.911B | 422.82 | 1.301M | 40.66x | 41.66x |
+| Tổng | 998.655M | 28.021B | 1,051.86 | 0.949M | 27.06x | 28.06x |
+
+### 6.2 Dự phóng P&L theo thời gian
+
+Dự phóng dùng rollout 12 tháng: COGS được ghi nhận theo nhịp triển khai chiến dịch, còn EMU được ghi nhận trễ hơn theo thời điểm conversion/retention phát sinh giá trị. Đây là projection vận hành, không thay đổi allocation baseline.
+
+| Quarter | COGS | Incremental EMU | Net incremental profit | Cumulative profit |
+|---|---:|---:|---:|---:|
+| 2020Q1 | 449.39M | 5.04B | 4.59B | 4.59B |
+| 2020Q2 | 349.53M | 8.13B | 7.78B | 12.37B |
+| 2020Q3 | 129.83M | 7.85B | 7.72B | 20.09B |
+| 2020Q4 | 69.91M | 7.01B | 6.94B | 27.02B |
+
+Monthly detail được xuất ở `pnl_projection.csv`.
 
 Tỷ lệ EMU/COGS:
 
 | Nhánh | EMU/COGS |
 |---|---:|
 | IB | 11.39x |
-| Non-IB | 35.11x |
-| Tổng | 24.46x |
+| Non-IB | 41.66x |
+| Tổng | 28.06x |
 
 Diễn giải business:
 
@@ -547,7 +579,7 @@ Mỗi quyết định có thể giải thích bằng:
 - Cập nhật conversion rate và cost mỗi tháng/quý dựa trên kết quả thực chiến.
 - Theo dõi EMU realized so với EMU expected.
 - Chạy lại MILP khi có thay đổi về budget, headcount Telesales/RM hoặc mục tiêu sản phẩm.
-- Mở rộng stress test bằng cách re-optimize allocation dưới từng scenario, không chỉ re-score allocation baseline.
+- Duy trì stress test bằng cách re-optimize allocation dưới từng scenario, không chỉ re-score allocation baseline.
 
 ---
 
@@ -559,6 +591,7 @@ Mỗi quyết định có thể giải thích bằng:
 | `Vong4_Decision_Engine_NonIB_Report.md` | Báo cáo chi tiết engine Non-IB retention |
 | `decision_engine.py` | Logic allocation IB |
 | `decision_engine_nonib.py` | Logic allocation Non-IB |
+| `business_kpi_scenarios.py` | Tính CAC, Incremental ROI, P&L projection và stress re-optimization |
 | `decision_config.py` | Cấu hình channel, cost, conversion và utility |
 | `gridsearch_budget_human_milp.py` | Grid search phân bổ budget/human cap |
 | `calculate_thresholds.py` | Tính threshold EMU dương |
@@ -574,6 +607,9 @@ Output customer-level nằm ở folder gốc project:
 | `thresholds.csv` | Threshold IB |
 | `thresholds_nonib.csv` | Threshold Non-IB |
 | `nonib_retention_cluster_summary.csv` | Tổng hợp retention theo cluster |
+| `business_kpis.csv` | CAC, Incremental ROI và EMU/COGS |
+| `pnl_projection.csv` | Dự phóng P&L monthly/quarterly |
+| `stress_reoptimized_nonib.csv` | Kịch bản stress Non-IB đã re-optimize allocation |
 
 ---
 
@@ -581,4 +617,4 @@ Output customer-level nằm ở folder gốc project:
 
 Giải pháp Vòng 4 của GCON xây dựng một decision engine hoàn chỉnh cho ngân hàng số, kết hợp NBFO, persona segmentation, churn prevention và tối ưu hóa nguồn lực. Điểm cốt lõi là chuyển prediction thành action: mỗi khách được đánh giá theo probability/risk, giá trị tài chính, chi phí kênh và ràng buộc vận hành.
 
-Với ngân sách gần 1 tỷ VND, engine đề xuất tiếp cận 100,473 lượt khách qua SMS, Telesales và RM, tạo EMU baseline 24.42 tỷ VND. Kết quả này cho thấy giải pháp có tính ứng dụng thực tế: vừa tăng trưởng cross-sell trên khách IB, vừa bảo vệ giá trị khách hàng Non-IB có rủi ro rời bỏ, đồng thời đảm bảo minh bạch, giải thích được và kiểm soát chi phí.
+Với ngân sách gần 1 tỷ VND, engine đề xuất tiếp cận 100,473 lượt khách qua SMS, Telesales và RM, tạo EMU baseline 28.02 tỷ VND. Kết quả này cho thấy giải pháp có tính ứng dụng thực tế: vừa tăng trưởng cross-sell trên khách IB, vừa bảo vệ giá trị khách hàng Non-IB có rủi ro rời bỏ, đồng thời đảm bảo minh bạch, giải thích được và kiểm soát chi phí.
