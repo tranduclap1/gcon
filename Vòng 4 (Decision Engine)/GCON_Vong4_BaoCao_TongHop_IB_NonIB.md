@@ -103,6 +103,8 @@ Kênh tiếp cận chung:
 | Telesales | 50,000 VND | 5% | Kênh human-touch cho khách cần tư vấn |
 | RM | 2,000,000 VND | 15% | Kênh cao cấp cho nhóm VIP/high value |
 
+Do đề bài không cung cấp trực tiếp conversion rate cho RM, nhóm giả định `CR_RM = 15%`. Mức này cao hơn Telesales vì RM là kênh chăm sóc cá nhân hóa cho VIP/high-value, nhưng vẫn được kiểm soát bằng ba lớp: RM chỉ eligible cho nhóm VIP/high-value, chi phí RM là 2M/lượt nên MILP chỉ chọn khi EMU đủ lớn, và stress test giảm CR để kiểm tra độ nhạy của allocation.
+
 ### 3.1 Tiêu chí chia nhóm IB
 
 IB segmentation được gán bằng rule-based profile để đảm bảo dễ giải thích trong vận hành. Rule được xét theo thứ tự ưu tiên từ trên xuống: nếu khách thỏa một điều kiện sớm hơn thì được gán vào segment đó.
@@ -311,7 +313,7 @@ CR Telesales/RM -15%
 | Baseline | 448.31M | 5.10B | 624.04 | 26,942 | 5,992 | 7 | 10.38x |
 | Adverse CR/FP re-optimized | 449.97M | 4.42B | 601.21 | 26,923 | 5,987 | 8 | 8.83x |
 
-EMU giảm nhưng vẫn dương lớn. Solver giảm nhẹ SMS/Telesales và tăng RM từ 7 lên 8 vì trong stress, một số khách VIP vẫn có EMU đủ tốt để dùng RM.
+Biên độ dao động EMU: IB giảm từ 5.10B xuống 4.42B, tương đương khoảng -13.3%. Dù bị stress, Incremental ROI vẫn đạt 8.83x, cho thấy allocation IB vẫn có biên an toàn dương lớn. Solver giảm nhẹ SMS/Telesales và tăng RM từ 7 lên 8 vì trong stress, một số khách VIP vẫn có EMU đủ tốt để dùng RM.
 
 ---
 
@@ -532,7 +534,7 @@ Stress test Non-IB được chạy lại MILP riêng cho từng kịch bản, kh
 | Baseline | 550.00M | 22.59B | 421.49 | 67,920 | 168 | 101 | 40.07x |
 | Adverse CR/FP re-optimized | 550.00M | 19.15B | 390.30 | 75,920 | 168 | 81 | 33.81x |
 
-Insight chính: trong adverse scenario, CR toàn kênh giảm 15% và FP tăng 20%, solver giảm RM từ 101 xuống 81 và tăng SMS để bảo vệ scale trong ngân sách.
+Biên độ dao động EMU: Non-IB giảm từ 22.59B xuống 19.15B, tương đương khoảng -15.2%. Dù bị stress, Incremental ROI vẫn đạt 33.81x, cho thấy chiến lược retention vẫn bền vững. Solver giảm RM từ 101 xuống 81 và tăng SMS để bảo vệ scale trong ngân sách.
 
 ---
 

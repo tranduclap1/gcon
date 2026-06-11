@@ -251,7 +251,7 @@ Engine duoc chay lai MILP rieng cho tung kich ban stress, khong chi tinh lai EMU
 | Baseline | 550.00M | 22.59B | 421.49 | 67,920 | 168 | 101 | 40.07x |
 | Adverse CR/FP re-optimized | 550.00M | 19.15B | 390.30 | 75,920 | 168 | 81 | 33.81x |
 
-Insight: trong adverse scenario, CR toan kenh giam 15% va FP tang 20%, solver giam RM tu 101 xuong 81 va tang SMS de bao ve scale trong ngan sach.
+Bien do dao dong EMU: Non-IB giam tu 22.59B xuong 19.15B, tuong duong khoang -15.2%. Du bi stress, Incremental ROI van dat 33.81x, cho thay chien luoc retention van ben vung. Solver giam RM tu 101 xuong 81 va tang SMS de bao ve scale trong ngan sach.
 
 ---
 

@@ -187,7 +187,7 @@ Stress test duoc chay lai MILP rieng cho kich ban adverse, khong chi re-score al
 | Baseline | 448.31M | 5.10B | 624.04 | 26,942 | 5,992 | 7 | 10.38x |
 | Adverse CR/FP re-optimized | 449.97M | 4.42B | 601.21 | 26,923 | 5,987 | 8 | 8.83x |
 
-Stress EMU giam nhung van duong lon. Solver giam nhe SMS/Telesales va tang RM tu 7 len 8 vi mot so khach VIP van co EMU du tot trong stress.
+Bien do dao dong EMU: IB giam tu 5.10B xuong 4.42B, tuong duong khoang -13.3%. Du bi stress, Incremental ROI van dat 8.83x, cho thay allocation IB van co bien an toan duong lon. Solver giam nhe SMS/Telesales va tang RM tu 7 len 8 vi mot so khach VIP van co EMU du tot trong stress.
 
 ---
 
