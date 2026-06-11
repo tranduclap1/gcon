@@ -164,13 +164,13 @@ def compress_to_customer_channel(df, emu_matrix):
     return customers, compressed_emu, selected_product, selected_probability
 
 
-def solve_allocation(emu_matrix):
+def solve_allocation(emu_matrix, budget_limit=BUDGET_LIMIT, human_cap=HUMAN_CAP):
     result = solve_channel_milp(
         emu_matrix,
         channel_costs,
-        BUDGET_LIMIT,
+        budget_limit,
         np.array([0, 1, 1]),
-        HUMAN_CAP,
+        human_cap,
     )
     allocations = result['allocations']
     print(f"MILP allocation status: {result['status']} - {result['message']}")
@@ -179,6 +179,36 @@ def solve_allocation(emu_matrix):
     counts = np.sum(allocations, axis=0)
     cost = np.sum(allocations * channel_costs)
     return total_profit, counts, cost, allocations
+
+
+def expected_conversions(prob_matrix, allocations, cr_multipliers=None):
+    if cr_multipliers is None:
+        cr_multipliers = {}
+    expected = 0.0
+    for channel_idx, ch_name in enumerate(channel_names):
+        p = prob_matrix[:, channel_idx]
+        uplift = 4 * p * (1 - p) * channels[ch_name]['cr'] * cr_multipliers.get(ch_name, 1.0)
+        expected += float(np.nansum(allocations[:, channel_idx] * uplift))
+    return expected
+
+
+def stress_record(scenario, budget, emu_matrix, prob_matrix, cr_multipliers=None):
+    profit, counts, cost, allocations = solve_allocation(emu_matrix, budget_limit=budget)
+    expected = expected_conversions(prob_matrix, allocations, cr_multipliers)
+    return {
+        'Branch': 'IB',
+        'Scenario': scenario,
+        'Budget': budget,
+        'COGS': float(cost),
+        'EMU': float(profit),
+        'Expected Conversions': expected,
+        'Expected Retained': np.nan,
+        'SMS': int(counts[0]),
+        'Telesales': int(counts[1]),
+        'RM': int(counts[2]),
+        'Incremental ROI': (float(profit) - float(cost)) / float(cost) if cost else 0,
+        'EMU/COGS': float(profit) / float(cost) if cost else 0,
+    }
 
 
 print("Loading IB product-level data...")
@@ -234,23 +264,29 @@ print(f"Allocations: SMS={counts_base[0]}, Tele={counts_base[1]}, RM={counts_bas
 print("\nSample Allocation Output:")
 print(frame_to_markdown(df_customer[output_cols].head(5)))
 
-print("\nCalculating Stress-Test (FP VIP cost +20%, CR -15% for Telesales and RM)...")
+print("\nCalculating Re-optimized IB Stress-Test...")
 stress_cr_multipliers = {'SMS': 1.0, 'Telesales': 0.85, 'RM': 0.85}
-profit_stress = 0.0
-paid_customer = df_customer[df_customer['RECOMMENDED_CHANNEL'] != 'None'].copy()
-for _, row in paid_customer.iterrows():
-    ch_name = row['RECOMMENDED_CHANNEL']
-    economics = FUM_MATRIX.get(row['ECONOMIC_SEGMENT'], FUM_MATRIX[DEFAULT_SEGMENT])
-    p = row['PROBABILITY']
-    cr = channels[ch_name]['cr'] * stress_cr_multipliers.get(ch_name, 1.0)
-    fp = economics['FP'] * (1.2 if row['IS_VIP'] else 1.0)
-    uplift = 4 * p * (1 - p) * cr
-    fp_probability = 1 - p - uplift
-    profit_stress += uplift * (economics['TP'] - economics['FN']) + fp_probability * fp - channels[ch_name]['cost']
-counts_stress = np.sum(alloc_base, axis=0)
-cost_stress = np.sum(alloc_base * channel_costs)
+emu_product_stress = np.where(
+    eligibility_matrix,
+    calculate_emu(df_master, fp_multiplier=1.2, cr_multipliers=stress_cr_multipliers),
+    -999_999_999,
+)
+_, emu_stress, _, prob_stress = compress_to_customer_channel(df_master, emu_product_stress)
 
-print("Stress Results:")
-print(f"Profit: {profit_stress:,.0f}")
-print(f"Cost: {cost_stress:,.0f}")
-print(f"Allocations: SMS={counts_stress[0]}, Tele={counts_stress[1]}, RM={counts_stress[2]}")
+stress_rows = [
+    stress_record('Baseline', BUDGET_LIMIT, emu_baseline, prob_by_channel),
+    stress_record(
+        'Adverse CR/FP re-optimized',
+        BUDGET_LIMIT,
+        emu_stress,
+        prob_stress,
+        stress_cr_multipliers,
+    ),
+]
+stress_df = pd.DataFrame(stress_rows)
+stress_df.to_csv(os.path.join(BASE_DIR, 'stress_reoptimized_ib.csv'), index=False)
+
+print("Re-optimized Stress Results:")
+print(frame_to_markdown(stress_df[[
+    'Scenario', 'COGS', 'EMU', 'Expected Conversions', 'SMS', 'Telesales', 'RM', 'Incremental ROI'
+]]))

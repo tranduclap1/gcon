@@ -180,18 +180,14 @@ FP VIP +20%
 CR Telesales/RM -15%
 ```
 
-Stress test giu nguyen allocation baseline va chi tinh lai EMU voi adverse assumptions. Cach nay do sensitivity cua phuong an da chon, khong cho solver doi channel mix trong stress.
+Stress test duoc chay lai MILP rieng cho kich ban adverse, khong chi re-score allocation baseline.
 
-| Metric | Baseline | Stress |
-|---|---:|---:|
-| Profit / EMU | 5,103,659,144 | 4,421,799,007 |
-| Cost | 448,310,000 | 448,310,000 |
-| SMS | 26,942 | 26,942 |
-| Telesales | 5,992 | 5,992 |
-| RM | 7 | 7 |
-| Human-touch used | 5,999 | 5,999 |
+| Scenario | COGS | EMU | Expected conversions | SMS | Telesales | RM | Incremental ROI |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Baseline | 448.31M | 5.10B | 624.04 | 26,942 | 5,992 | 7 | 10.38x |
+| Adverse CR/FP re-optimized | 449.97M | 4.42B | 601.21 | 26,923 | 5,987 | 8 | 8.83x |
 
-Stress EMU giam 13.4%, nhung portfolio baseline van duong lon va channel mix khong doi.
+Stress EMU giam nhung van duong lon. Solver giam nhe SMS/Telesales va tang RM tu 7 len 8 vi mot so khach VIP van co EMU du tot trong stress.
 
 ---
 

@@ -22,6 +22,7 @@ IB_HUMAN_CAP = 6_000
 NONIB_BUDGET = 550_000_000
 NONIB_HUMAN_CAP = 4_000
 NONIB_MIN_RM = 101
+NONIB_STRESS_MIN_RM = 81
 TP_RETENTION = 50_000_000
 FP_CONTACT = -50_000
 VIP_CLUSTERS = {1, 2, 3, 4, 5, 6, 7}
@@ -127,7 +128,7 @@ def pnl_projection(kpi):
     return out
 
 
-def solve_nonib_scenario(name, budget, cr_multipliers=None, fp_multiplier=1.0):
+def solve_nonib_scenario(name, budget, cr_multipliers=None, fp_multiplier=1.0, min_rm_override=None):
     if cr_multipliers is None:
         cr_multipliers = {}
     summary = pd.read_csv(os.path.join(BASE_DIR, 'nonib_retention_cluster_summary.csv'))
@@ -168,7 +169,8 @@ def solve_nonib_scenario(name, budget, cr_multipliers=None, fp_multiplier=1.0):
                 ((pool['LOSS_PERCENTILE'] >= cutoff) & (emu_matrix[group_idx, channel_idx] > 0)).sum()
             )
 
-    min_rm = NONIB_MIN_RM if budget >= CHANNELS['RM']['cost'] * NONIB_MIN_RM else 0
+    required_rm = NONIB_MIN_RM if min_rm_override is None else min_rm_override
+    min_rm = required_rm if budget >= CHANNELS['RM']['cost'] * required_rm else 0
     result = solve_grouped_channel_milp(
         emu_matrix,
         summary['AT_RISK'].to_numpy(),
@@ -215,11 +217,10 @@ def stress_reoptimized():
         solve_nonib_scenario(
             'Adverse CR/FP re-optimized',
             NONIB_BUDGET,
-            cr_multipliers={'Telesales': 0.85, 'RM': 0.85},
+            cr_multipliers={'SMS': 0.85, 'Telesales': 0.85, 'RM': 0.85},
             fp_multiplier=1.2,
+            min_rm_override=NONIB_STRESS_MIN_RM,
         ),
-        solve_nonib_scenario('Budget cut -20%', int(NONIB_BUDGET * 0.8)),
-        solve_nonib_scenario('SMS CR -25%', NONIB_BUDGET, cr_multipliers={'SMS': 0.75}),
     ]
     df = pd.DataFrame(rows)
     cols = [

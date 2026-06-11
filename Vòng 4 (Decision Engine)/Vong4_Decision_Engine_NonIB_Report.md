@@ -244,16 +244,14 @@ Budget binding dung 550M. Human cap chua binding hoan toan vi budget het truoc. 
 
 ## 10. Stress Test va Re-optimization
 
-Engine duoc chay lai MILP rieng cho tung kich ban stress, khong chi tinh lai EMU tren allocation baseline.
+Engine duoc chay lai MILP rieng cho tung kich ban stress, khong chi tinh lai EMU tren allocation baseline. Trong stress scenario, RM minimum duoc noi tu 101 xuong 81 de mo phong viec giam khoang 20 luot cham soc RM khi dieu kien thi truong xau hon.
 
 | Scenario | COGS | EMU | Expected retained | SMS | Telesales | RM | Incremental ROI |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Baseline | 550.00M | 22.59B | 421.49 | 67,920 | 168 | 101 | 40.07x |
-| Adverse CR/FP re-optimized | 550.00M | 21.74B | 418.66 | 67,920 | 168 | 101 | 38.53x |
-| Budget cut -20% | 440.00M | 18.32B | 313.52 | 45,920 | 168 | 101 | 40.64x |
-| SMS CR -25% | 550.00M | 17.29B | 286.61 | 42,260 | 2,734 | 101 | 30.44x |
+| Adverse CR/FP re-optimized | 550.00M | 19.15B | 390.30 | 75,920 | 168 | 81 | 33.81x |
 
-Insight: khi SMS conversion giam 25%, chien luoc toi uu moi chuyen bot scale tu SMS sang Telesales, trong khi van giu RM minimum cho cum VIP/high-value. Khi budget bi cat 20%, solver cat bot SMS truoc vi SMS la channel scale linh hoat nhat, con RM/Telesales toi thieu cho nhom gia tri cao van duoc bao toan.
+Insight: trong adverse scenario, CR toan kenh giam 15% va FP tang 20%, solver giam RM tu 101 xuong 81 va tang SMS de bao ve scale trong ngan sach.
 
 ---
 

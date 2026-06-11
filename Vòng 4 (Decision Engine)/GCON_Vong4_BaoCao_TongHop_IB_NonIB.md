@@ -297,6 +297,8 @@ Nhìn theo segment, phần lớn RM nằm ở `V2_Conservative` và `V1_HV_Borro
 
 ### 4.7 Stress test IB
 
+Stress test IB được chạy lại MILP riêng cho kịch bản adverse, cùng logic với Non-IB.
+
 Kịch bản stress:
 
 ```text
@@ -304,15 +306,12 @@ FP VIP +20%
 CR Telesales/RM -15%
 ```
 
-| Metric | Baseline | Stress |
-|---|---:|---:|
-| EMU | 5,103,659,144 | 4,421,799,007 |
-| Cost/COGS | 448,310,000 | 448,310,000 |
-| SMS | 26,942 | 26,942 |
-| Telesales | 5,992 | 5,992 |
-| RM | 7 | 7 |
+| Scenario | COGS | EMU | Expected conversions | SMS | Telesales | RM | Incremental ROI |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Baseline | 448.31M | 5.10B | 624.04 | 26,942 | 5,992 | 7 | 10.38x |
+| Adverse CR/FP re-optimized | 449.97M | 4.42B | 601.21 | 26,923 | 5,987 | 8 | 8.83x |
 
-EMU giảm 13.4% nhưng vẫn dương lớn, cho thấy allocation IB có khả năng chịu được suy giảm conversion và tăng chi phí sai mục tiêu.
+EMU giảm nhưng vẫn dương lớn. Solver giảm nhẹ SMS/Telesales và tăng RM từ 7 lên 8 vì trong stress, một số khách VIP vẫn có EMU đủ tốt để dùng RM.
 
 ---
 
@@ -526,16 +525,14 @@ Budget binding:
 
 ### 5.8 Stress test Non-IB
 
-Stress test Non-IB được chạy lại MILP riêng cho từng kịch bản, không chỉ re-score allocation baseline.
+Stress test Non-IB được chạy lại MILP riêng cho từng kịch bản, không chỉ re-score allocation baseline. Trong kịch bản stress, constraint RM minimum được nới từ 101 xuống 81 để mô phỏng việc giảm khoảng 20 lượt chăm sóc RM khi thị trường xấu hơn.
 
 | Scenario | COGS | EMU | Expected retained | SMS | Telesales | RM | Incremental ROI |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Baseline | 550.00M | 22.59B | 421.49 | 67,920 | 168 | 101 | 40.07x |
-| Adverse CR/FP re-optimized | 550.00M | 21.74B | 418.66 | 67,920 | 168 | 101 | 38.53x |
-| Budget cut -20% | 440.00M | 18.32B | 313.52 | 45,920 | 168 | 101 | 40.64x |
-| SMS CR -25% | 550.00M | 17.29B | 286.61 | 42,260 | 2,734 | 101 | 30.44x |
+| Adverse CR/FP re-optimized | 550.00M | 19.15B | 390.30 | 75,920 | 168 | 81 | 33.81x |
 
-Insight chính: khi SMS conversion giảm 25%, chiến lược tối ưu mới chuyển bớt scale từ SMS sang Telesales. Khi budget bị cắt 20%, solver cắt SMS trước vì đây là channel scale linh hoạt nhất, trong khi vẫn giữ RM minimum cho nhóm VIP/high-value.
+Insight chính: trong adverse scenario, CR toàn kênh giảm 15% và FP tăng 20%, solver giảm RM từ 101 xuống 81 và tăng SMS để bảo vệ scale trong ngân sách.
 
 ---
 
@@ -684,6 +681,7 @@ Output customer-level nằm ở folder gốc project:
 | `nonib_retention_cluster_summary.csv` | Tổng hợp retention theo cluster |
 | `business_kpis.csv` | CAC, Incremental ROI và EMU/COGS |
 | `pnl_projection.csv` | Dự phóng P&L monthly/quarterly |
+| `stress_reoptimized_ib.csv` | Kịch bản stress IB đã re-optimize allocation |
 | `stress_reoptimized_nonib.csv` | Kịch bản stress Non-IB đã re-optimize allocation |
 
 ---
