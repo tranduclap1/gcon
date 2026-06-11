@@ -51,7 +51,7 @@ Cấu hình này được chọn vì ba lý do chính:
 - Non-IB được cấp budget lớn hơn vì bài toán retention có population at-risk lớn và giá trị giữ chân cao.
 - Score được chuẩn hóa giữa hai nhánh, nên phương án được chọn không chỉ tối đa hóa riêng IB hoặc riêng Non-IB mà cân bằng cả cross-sell và retention.
 
-Lưu ý: grid search dùng để chọn cấu hình budget/human cap. EMU Non-IB chính thức trong baseline là 22.91B, được tính trên allocation cuối cùng của engine Non-IB.
+Lưu ý: grid search dùng để chọn cấu hình budget/human cap. EMU Non-IB chính thức trong baseline là 22.59B, được tính trên allocation cuối cùng của engine Non-IB.
 
 Kết quả baseline:
 
@@ -59,11 +59,11 @@ Kết quả baseline:
 |---|---:|---:|---:|
 | Population | 124,886 | 127,000 | 251,886 |
 | Cost/COGS chiến dịch | 448,310,000 | 550,000,000 | 998,310,000 |
-| EMU kỳ vọng | 5,103,659,144 | 22,910,966,121 | 28,014,625,265 |
-| SMS | 26,942 | 66,680 | 93,622 |
-| Telesales | 5,992 | 292 | 6,284 |
+| EMU kỳ vọng | 5,103,659,144 | 22,588,039,112 | 27,691,698,256 |
+| SMS | 26,942 | 67,920 | 94,862 |
+| Telesales | 5,992 | 168 | 6,160 |
 | RM | 7 | 101 | 108 |
-| Human-touch used | 5,999 | 393 | 6,392 |
+| Human-touch used | 5,999 | 269 | 6,268 |
 
 ---
 
@@ -410,7 +410,15 @@ EXPECTED_LOSS_SCORE = P_CHURN_cluster × CLV_5YR
 LOSS_PERCENTILE = percentile_rank(EXPECTED_LOSS_SCORE within cluster)
 ```
 
-Threshold optimization được chạy theo `cluster/persona × channel` trên percentile này. Vì `P_CHURN` hiện ở cấp cluster, percentile giúp đưa threshold về dạng phần trăm xếp hạng rủi ro-giá trị, đồng thời vẫn cá nhân hóa trong cùng cluster bằng `CLV_5YR`. Để phản ánh vai trò vận hành của từng kênh, engine áp dụng thêm channel-intensity floor: SMS có thể target rộng, Telesales chỉ xét top 30% expected-loss, và RM chỉ xét top 5% expected-loss. Khách được đưa vào candidate pool nếu:
+Threshold optimization được chạy theo `cluster/persona × channel` trên percentile này. Vì `P_CHURN` hiện ở cấp cluster, percentile giúp đưa threshold về dạng phần trăm xếp hạng rủi ro-giá trị, đồng thời vẫn cá nhân hóa trong cùng cluster bằng `CLV_5YR`. Để tránh Telesales/RM có cùng cutoff cho mọi cluster, engine dùng dynamic floor theo `P_CHURN_cluster`: cluster rủi ro cao được hạ cutoff để human-touch target rộng hơn, cluster rủi ro thấp có cutoff cao hơn.
+
+```text
+risk_rank_g = (P_CHURN_g - min(P_CHURN)) / (max(P_CHURN) - min(P_CHURN))
+Telesales_floor_g = 85% - risk_rank_g * (85% - 55%)
+RM_floor_g = 98% - risk_rank_g * (98% - 90%)
+```
+
+Khách được đưa vào candidate pool nếu:
 
 ```text
 LOSS_PERCENTILE >= threshold_cluster,channel
@@ -418,14 +426,14 @@ LOSS_PERCENTILE >= threshold_cluster,channel
 
 | Cluster | SMS cutoff | Telesales cutoff | RM cutoff |
 |---|---:|---:|---:|
-| C3_Ultra_Saver | 0.33% | 70.00% | 95.00% |
-| C5_HV_Saver | 0.01% | 70.00% | 95.00% |
-| C4_Multi_Saver | 2.12% | 70.00% | 95.00% |
-| C2_Senior_HV | 0.36% | 70.00% | 95.00% |
-| C1_HV_Traditional | 2.33% | 70.00% | 95.00% |
-| C0_Traditional | 25.36% | 70.00% | N/A |
-| C6_Stable_Senior | 0.02% | 70.00% | No ROI |
-| C7_HV_Borrower | 0.15% | 70.00% | No ROI |
+| C3_Ultra_Saver | 0.33% | 55.00% | 90.00% |
+| C5_HV_Saver | 0.01% | 77.77% | 96.07% |
+| C4_Multi_Saver | 2.12% | 78.00% | 96.13% |
+| C2_Senior_HV | 0.36% | 79.10% | 96.43% |
+| C1_HV_Traditional | 2.33% | 82.81% | 97.42% |
+| C0_Traditional | 25.36% | 83.39% | N/A |
+| C6_Stable_Senior | 0.02% | 84.59% | No ROI |
+| C7_HV_Borrower | 0.15% | 85.00% | No ROI |
 
 File đầy đủ nằm ở `optimized_thresholds_nonib.csv`; bảng này có cả SMS, Telesales và RM.
 
@@ -486,32 +494,32 @@ Non-IB có thêm constraint tối thiểu cho RM để đảm bảo nhóm khách
 | Hard churn proxy | 3,876 |
 | Runoff risk proxy | 8,472 |
 | Effective churn score | 6,417.6 |
-| SMS allocated | 66,680 |
-| Telesales | 292 |
+| SMS allocated | 67,920 |
+| Telesales | 168 |
 | RM | 101 |
-| None | 59,927 |
+| None | 58,811 |
 | Cost/COGS | 550,000,000 VND |
-| Campaign EMU | 22,910,966,121 VND |
-| Expected retained customers | 422.82 |
-| CLV at risk targeted | 116,589,517,118 VND |
-| Human-touch used | 393 / 4,000 |
+| Campaign EMU | 22,588,039,112 VND |
+| Expected retained customers | 421.49 |
+| CLV at risk targeted | 116,608,591,477 VND |
+| Human-touch used | 269 / 4,000 |
 
 Budget binding:
 
 ```text
-66,680 * 5,000 + 292 * 50,000 + 101 * 2,000,000 = 550,000,000 VND
+67,920 * 5,000 + 168 * 50,000 + 101 * 2,000,000 = 550,000,000 VND
 ```
 
 ### 5.7 Allocation theo cluster
 
 | Cluster | N | SMS | Telesales | RM | None | Cost | EMU |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| C3_Ultra_Saver | 912 | 0 | 292 | 101 | 519 | 216.60M | 2,058.4M |
-| C5_HV_Saver | 13,178 | 10,542 | 0 | 0 | 2,636 | 52.71M | 9,113.5M |
+| C3_Ultra_Saver | 912 | 188 | 168 | 37 | 519 | 83.34M | 1,267.8M |
+| C5_HV_Saver | 13,178 | 10,478 | 0 | 64 | 2,636 | 180.39M | 9,364.7M |
 | C4_Multi_Saver | 800 | 591 | 0 | 0 | 209 | 2.96M | 500.2M |
 | C2_Senior_HV | 562 | 511 | 0 | 0 | 51 | 2.56M | 385.0M |
 | C1_HV_Traditional | 493 | 470 | 0 | 0 | 23 | 2.35M | 188.8M |
-| C0_Traditional | 80,038 | 49,706 | 0 | 0 | 30,332 | 248.53M | 9,639.2M |
+| C0_Traditional | 80,038 | 50,822 | 0 | 0 | 29,216 | 254.11M | 9,855.7M |
 | C6_Stable_Senior | 5,794 | 4,860 | 0 | 0 | 934 | 24.30M | 1,025.8M |
 | C7_HV_Borrower | 653 | 0 | 0 | 0 | 653 | 0 | 0 |
 | P0_Dormant | 24,570 | 0 | 0 | 0 | 24,570 | 0 | 0 |
@@ -522,10 +530,10 @@ Stress test Non-IB được chạy lại MILP riêng cho từng kịch bản, kh
 
 | Scenario | COGS | EMU | Expected retained | SMS | Telesales | RM | Incremental ROI |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Baseline | 550.00M | 22.91B | 422.82 | 66,680 | 292 | 101 | 40.66x |
-| Adverse CR/FP re-optimized | 550.00M | 21.96B | 418.54 | 66,680 | 292 | 101 | 38.93x |
-| Budget cut -20% | 440.00M | 18.64B | 314.85 | 44,680 | 292 | 101 | 41.37x |
-| SMS CR -25% | 550.00M | 18.14B | 276.58 | 30,610 | 3,899 | 101 | 31.97x |
+| Baseline | 550.00M | 22.59B | 421.49 | 67,920 | 168 | 101 | 40.07x |
+| Adverse CR/FP re-optimized | 550.00M | 21.74B | 418.66 | 67,920 | 168 | 101 | 38.53x |
+| Budget cut -20% | 440.00M | 18.32B | 313.52 | 45,920 | 168 | 101 | 40.64x |
+| SMS CR -25% | 550.00M | 17.29B | 286.61 | 42,260 | 2,734 | 101 | 30.44x |
 
 Insight chính: khi SMS conversion giảm 25%, chiến lược tối ưu mới chuyển bớt scale từ SMS sang Telesales. Khi budget bị cắt 20%, solver cắt SMS trước vì đây là channel scale linh hoạt nhất, trong khi vẫn giữ RM minimum cho nhóm VIP/high-value.
 
@@ -544,10 +552,10 @@ Bảng tổng hợp:
 | Nhánh | Giá trị kinh doanh chính | Cost | EMU kỳ vọng |
 |---|---|---:|---:|
 | IB | Cross-sell NBFO trên khách đã có IB | 448.310M | 5.104B |
-| Non-IB | Giữ chân khách at-risk, bảo vệ CLV | 550.000M | 22.911B |
-| Tổng | Cross-sell + retention | 998.310M | 28.015B |
+| Non-IB | Giữ chân khách at-risk, bảo vệ CLV | 550.000M | 22.588B |
+| Tổng | Cross-sell + retention | 998.310M | 27.692B |
 
-Expected retained customers của Non-IB là 422.82 khách. Với IB, output là allocation cross-sell theo xác suất sản phẩm và channel; giá trị kỳ vọng được phản ánh trực tiếp trong EMU 5.11B.
+Expected retained customers của Non-IB là 421.49 khách. Với IB, output là allocation cross-sell theo xác suất sản phẩm và channel; giá trị kỳ vọng được phản ánh trực tiếp trong EMU 5.11B.
 
 ### 6.1 KPI bắt buộc cho Pitch Deck
 
@@ -556,8 +564,8 @@ CAC được tính bằng `COGS / expected conversions`. Incremental ROI đượ
 | Nhánh | COGS | EMU | Expected conversions | CAC | Incremental ROI | EMU/COGS |
 |---|---:|---:|---:|---:|---:|---:|
 | IB | 448.310M | 5.104B | 624.04 | 0.718M | 10.38x | 11.38x |
-| Non-IB | 550.000M | 22.911B | 422.82 | 1.301M | 40.66x | 41.66x |
-| Tổng | 998.310M | 28.015B | 1,046.86 | 0.954M | 27.06x | 28.06x |
+| Non-IB | 550.000M | 22.588B | 421.49 | 1.305M | 40.07x | 41.07x |
+| Tổng | 998.310M | 27.692B | 1,045.53 | 0.955M | 26.74x | 27.74x |
 
 ### 6.2 Dự phóng P&L theo thời gian
 
@@ -565,10 +573,10 @@ Dự phóng dùng rollout 12 tháng: COGS được ghi nhận theo nhịp triể
 
 | Quarter | COGS | Incremental EMU | Net incremental profit | Cumulative profit |
 |---|---:|---:|---:|---:|
-| 2020Q1 | 449.24M | 5.04B | 4.59B | 4.59B |
-| 2020Q2 | 349.41M | 8.12B | 7.77B | 12.37B |
-| 2020Q3 | 129.78M | 7.84B | 7.71B | 20.08B |
-| 2020Q4 | 69.88M | 7.00B | 6.93B | 27.02B |
+| 2020Q1 | 449.24M | 4.98B | 4.54B | 4.54B |
+| 2020Q2 | 349.41M | 8.03B | 7.68B | 12.22B |
+| 2020Q3 | 129.78M | 7.75B | 7.62B | 19.84B |
+| 2020Q4 | 69.88M | 6.92B | 6.85B | 26.69B |
 
 Monthly detail được xuất ở `pnl_projection.csv`.
 
@@ -577,8 +585,8 @@ Tỷ lệ EMU/COGS:
 | Nhánh | EMU/COGS |
 |---|---:|
 | IB | 11.38x |
-| Non-IB | 41.66x |
-| Tổng | 28.06x |
+| Non-IB | 41.07x |
+| Tổng | 27.74x |
 
 Diễn giải business:
 
@@ -684,4 +692,4 @@ Output customer-level nằm ở folder gốc project:
 
 Giải pháp Vòng 4 của GCON xây dựng một decision engine hoàn chỉnh cho ngân hàng số, kết hợp NBFO, persona segmentation, churn prevention và tối ưu hóa nguồn lực. Điểm cốt lõi là chuyển prediction thành action: mỗi khách được đánh giá theo probability/risk, giá trị tài chính, chi phí kênh và ràng buộc vận hành.
 
-Với ngân sách gần 1 tỷ VND, engine đề xuất tiếp cận 100,014 lượt khách qua SMS, Telesales và RM, tạo EMU baseline 28.01 tỷ VND. Kết quả này cho thấy giải pháp có tính ứng dụng thực tế: vừa tăng trưởng cross-sell trên khách IB, vừa bảo vệ giá trị khách hàng Non-IB có rủi ro rời bỏ, đồng thời đảm bảo minh bạch, giải thích được và kiểm soát chi phí.
+Với ngân sách gần 1 tỷ VND, engine đề xuất tiếp cận 101,130 lượt khách qua SMS, Telesales và RM, tạo EMU baseline 27.69 tỷ VND. Kết quả này cho thấy giải pháp có tính ứng dụng thực tế: vừa tăng trưởng cross-sell trên khách IB, vừa bảo vệ giá trị khách hàng Non-IB có rủi ro rời bỏ, đồng thời đảm bảo minh bạch, giải thích được và kiểm soát chi phí.

@@ -25,10 +25,10 @@ IB_CAC_CAP = 750_000
 NONIB_CAC_CAP = 1_500_000
 TP_RETENTION = 50_000_000
 FP_CONTACT = -50_000
-NONIB_CHANNEL_PERCENTILE_FLOOR = {
-    'SMS': 0.00,
-    'Telesales': 0.70,
-    'RM': 0.95,
+NONIB_DYNAMIC_FLOOR_RANGE = {
+    'SMS': (0.00, 0.00),
+    'Telesales': (0.55, 0.85),
+    'RM': (0.90, 0.98),
 }
 
 
@@ -123,6 +123,18 @@ def optimize_threshold(df, score_col, emu_col, channel, cac_cap, min_threshold=N
     return chosen
 
 
+def nonib_channel_floor(channel, p_churn, risk_min, risk_max):
+    low, high = NONIB_DYNAMIC_FLOOR_RANGE.get(channel, (0.0, 0.0))
+    if high == low:
+        return low
+    if risk_max <= risk_min:
+        risk_rank = 0.5
+    else:
+        risk_rank = (float(p_churn) - risk_min) / (risk_max - risk_min)
+    risk_rank = float(np.clip(risk_rank, 0.0, 1.0))
+    return high - risk_rank * (high - low)
+
+
 def load_ib_candidates():
     scores_path = os.path.join(
         BASE_DIR,
@@ -212,11 +224,15 @@ def load_nonib_candidates():
 
 def optimize_nonib_thresholds():
     df = load_nonib_candidates()
+    risk_by_segment = df[df['CHURN_AT_RISK'] == 1].groupby('SEGMENT_CLUSTER')['P_CHURN'].first()
+    risk_min = float(risk_by_segment.min()) if len(risk_by_segment) else 0.0
+    risk_max = float(risk_by_segment.max()) if len(risk_by_segment) else 1.0
     rows = []
     for segment in sorted(df['SEGMENT_CLUSTER'].dropna().unique()):
         seg_df = df[(df['SEGMENT_CLUSTER'] == segment) & (df['CHURN_AT_RISK'] == 1)].copy()
         if seg_df.empty:
             continue
+        segment_p_churn = float(seg_df['P_CHURN'].iloc[0])
         for channel in CHANNEL_NAMES:
             if channel == 'RM' and (seg_df['FN'].max() >= 0):
                 rows.append({
@@ -231,17 +247,19 @@ def optimize_nonib_thresholds():
             work = seg_df.copy()
             work['EXPECTED_CONVERSIONS'] = uplift(work['P_CHURN'], channel)
             work['EMU'] = emu_retention(work['P_CHURN'], work['FN'], channel)
+            floor = nonib_channel_floor(channel, segment_p_churn, risk_min, risk_max)
             chosen = optimize_threshold(
                 work,
                 'LOSS_PERCENTILE',
                 'EMU',
                 channel,
                 NONIB_CAC_CAP,
-                min_threshold=NONIB_CHANNEL_PERCENTILE_FLOOR.get(channel, 0.0),
+                min_threshold=floor,
             )
             if chosen is None:
                 continue
             threshold = chosen.get('Threshold')
+            chosen['Operational Floor'] = floor
             chosen['Threshold Unit'] = 'Expected-loss percentile'
             chosen['Target Top Percent'] = (1 - threshold) if pd.notna(threshold) else np.nan
             chosen.update({
