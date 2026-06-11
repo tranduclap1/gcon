@@ -135,18 +135,18 @@ MILP status: optimal.
 | Metric | Ket qua |
 |---|---:|
 | Total customers | 124,886 |
-| Profit / EMU ky vong | 5,109,748,849 VND |
-| Cost | 448,655,000 VND |
+| Profit / EMU ky vong | 5,103,659,144 VND |
+| Cost | 448,310,000 VND |
 | Budget limit | 450,000,000 VND |
-| SMS | 27,401 |
-| Telesales | 5,993 |
-| RM | 6 |
-| None / Auto-brake | 91,486 |
+| SMS | 26,942 |
+| Telesales | 5,992 |
+| RM | 7 |
+| None / Auto-brake | 91,945 |
 | Human-touch used | 5,999 |
 
 Doc ket qua:
 
-- Budget gan binding: solver dung 448.655M / 450M.
+- Budget gan binding: solver dung 448.310M / 450M.
 - Human cap gan binding: Telesales + RM = 5,999 / 6,000.
 - RM chi con 6 slot vi budget IB giam tu 700M xuong 450M; solver uu tien Telesales/SMS co EMU tren chi phi tot hon.
 - EMU van duy tri 5.11 ty VND nho human cap IB tang len 6,000.
@@ -157,12 +157,12 @@ Doc ket qua:
 
 | Segment | N | SMS | Telesales | RM | None | Cost | EMU |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| V3_Multi_Premium | 240 | 5 | 33 | 0 | 202 | 1.68M | 23.7M |
-| V1_HV_Borrower | 6,260 | 670 | 3,310 | 1 | 2,279 | 170.85M | 1,664.0M |
-| V2_Conservative | 3,873 | 225 | 1,600 | 5 | 2,043 | 91.13M | 1,842.2M |
-| N1_Active_Digital | 6,531 | 983 | 443 | 0 | 5,105 | 27.07M | 137.8M |
-| N3_Dormant | 60,223 | 18,075 | 299 | 0 | 41,849 | 105.33M | 968.1M |
-| N2_Semi_Digital | 47,759 | 7,443 | 308 | 0 | 40,008 | 52.62M | 473.9M |
+| V3_Multi_Premium | 240 | 0 | 36 | 0 | 204 | 1.80M | 23.9M |
+| V1_HV_Borrower | 6,260 | 65 | 3,470 | 1 | 2,724 | 175.83M | 1,673.7M |
+| V2_Conservative | 3,873 | 213 | 1,599 | 6 | 2,055 | 93.02M | 1,843.5M |
+| N1_Active_Digital | 6,531 | 1,051 | 375 | 0 | 5,105 | 24.01M | 130.6M |
+| N3_Dormant | 60,223 | 18,117 | 257 | 0 | 41,849 | 103.44M | 963.7M |
+| N2_Semi_Digital | 47,759 | 7,496 | 255 | 0 | 40,008 | 50.23M | 468.3M |
 
 Doc ket qua:
 
@@ -184,11 +184,11 @@ Stress test giu nguyen allocation baseline va chi tinh lai EMU voi adverse assum
 
 | Metric | Baseline | Stress |
 |---|---:|---:|
-| Profit / EMU | 5,109,748,849 | 4,423,648,060 |
-| Cost | 448,655,000 | 448,655,000 |
-| SMS | 27,401 | 27,401 |
-| Telesales | 5,993 | 5,993 |
-| RM | 6 | 6 |
+| Profit / EMU | 5,103,659,144 | 4,421,799,007 |
+| Cost | 448,310,000 | 448,310,000 |
+| SMS | 26,942 | 26,942 |
+| Telesales | 5,992 | 5,992 |
+| RM | 7 | 7 |
 | Human-touch used | 5,999 | 5,999 |
 
 Stress EMU giam 13.4%, nhung portfolio baseline van duong lon va channel mix khong doi.

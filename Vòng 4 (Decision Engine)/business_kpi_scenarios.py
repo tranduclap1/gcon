@@ -54,7 +54,10 @@ def business_kpis():
         axis=1,
     )
     ib_cost = float(ib_paid['CAMPAIGN_COST'].sum())
-    ib_emu = 5_109_748_849.0
+    if 'CAMPAIGN_EMU' in ib_paid.columns:
+        ib_emu = float(ib_paid['CAMPAIGN_EMU'].sum())
+    else:
+        ib_emu = 5_109_748_849.0
     ib_conversions = float(ib_paid['EXPECTED_CONVERSIONS'].sum())
 
     nonib_paid = nonib[nonib['RECOMMENDED_CHANNEL'] != 'None'].copy()

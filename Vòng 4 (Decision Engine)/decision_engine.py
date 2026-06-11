@@ -21,6 +21,14 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 BUDGET_LIMIT = 450_000_000
 HUMAN_CAP = 6_000
 
+channels = {
+    'SMS': {'cost': 5_000, 'cr': 0.02},
+    'Telesales': {'cost': 50_000, 'cr': 0.05},
+    'RM': {'cost': 2_000_000, 'cr': 0.15},
+}
+channel_names = np.array(['SMS', 'Telesales', 'RM'])
+channel_costs = np.array([channels[ch]['cost'] for ch in channel_names])
+
 
 def frame_to_markdown(df):
     rows = [[str(col) for col in df.columns]]
@@ -32,15 +40,6 @@ def frame_to_markdown(df):
     return '\n'.join([header, separator] + body)
 
 
-channels = {
-    'SMS': {'cost': 5_000, 'cr': 0.02},
-    'Telesales': {'cost': 50_000, 'cr': 0.05},
-    'RM': {'cost': 2_000_000, 'cr': 0.15},
-}
-channel_names = np.array(['SMS', 'Telesales', 'RM'])
-channel_costs = np.array([channels[ch]['cost'] for ch in channel_names])
-
-
 def load_master_data():
     path_ib_prob = os.path.join(
         BASE_DIR,
@@ -48,136 +47,38 @@ def load_master_data():
         "saved_models",
         "gcon_test_scores_best_xgboost_calibrated_sigmoid.parquet",
     )
-    df_ib = pd.read_parquet(path_ib_prob)
-    idx_max_prob = df_ib.groupby('CUSTOMER_NUMBER')['SUBSCRIPTION_PROPENSITY'].idxmax()
-    df_ib_prob = df_ib.loc[idx_max_prob, ['CUSTOMER_NUMBER', 'PRODUCT_NAME', 'SUBSCRIPTION_PROPENSITY']].copy()
-    df_ib_prob.rename(
-        columns={'SUBSCRIPTION_PROPENSITY': 'PROBABILITY', 'PRODUCT_NAME': 'RECOMMENDED_PRODUCT'},
-        inplace=True,
+    df_prob = pd.read_parquet(path_ib_prob)
+    df_prob = df_prob.rename(
+        columns={
+            'SUBSCRIPTION_PROPENSITY': 'PROBABILITY',
+            'PRODUCT_NAME': 'RECOMMENDED_PRODUCT',
+        }
     )
 
     path_ib_features = os.path.join(BASE_DIR, "NBFO_IB", "processed_data", "gcon_model_input.parquet")
-    df_ib_features = pd.read_parquet(path_ib_features)
-    if 'MONTH' in df_ib_features.columns:
-        df_ib_features = df_ib_features.sort_values('MONTH').groupby('CUSTOMER_NUMBER').last().reset_index()
+    df_features = pd.read_parquet(path_ib_features)
+    if 'MONTH' in df_features.columns:
+        df_features = df_features.sort_values('MONTH').groupby('CUSTOMER_NUMBER').last().reset_index()
     else:
-        df_ib_features = df_ib_features.groupby('CUSTOMER_NUMBER').last().reset_index()
-    df_ib_features = attach_ib_register_date(df_ib_features, BASE_DIR)
-    df_ib_segments = add_ib_segments(df_ib_features)
+        df_features = df_features.groupby('CUSTOMER_NUMBER').last().reset_index()
+    df_features = attach_ib_register_date(df_features, BASE_DIR)
+    df_segments = add_ib_segments(df_features)
+
     asset_cols = ['AVG_TD_BALANCE', 'AVG_CA_BALANCE', 'AVG_LOAN_AMOUNT']
     segment_cols = ['CUSTOMER_NUMBER', 'SEGMENT', 'MAPPED_IB_SEGMENT', 'CUSTOMER_TYPE']
-    segment_cols += [col for col in asset_cols if col in df_ib_segments.columns]
-    df_ib_prob = df_ib_prob.merge(
-        df_ib_segments[segment_cols],
-        on='CUSTOMER_NUMBER',
-        how='left',
-    )
-    df_ib_prob['SEGMENT'] = df_ib_prob['SEGMENT'].fillna(DEFAULT_SEGMENT)
-    df_ib_prob['MAPPED_IB_SEGMENT'] = df_ib_prob['MAPPED_IB_SEGMENT'].fillna(df_ib_prob['SEGMENT'])
-    df_ib_prob['CUSTOMER_TYPE'] = df_ib_prob['CUSTOMER_TYPE'].fillna('IB')
-    df_ib_prob['SEGMENT_CLUSTER'] = df_ib_prob['SEGMENT']
-    df_ib_prob['BUY_RATE_PROXY'] = np.nan
-
-    common_cols = [
-        'CUSTOMER_NUMBER',
-        'CUSTOMER_TYPE',
-        'SEGMENT',
-        'SEGMENT_CLUSTER',
-        'MAPPED_IB_SEGMENT',
-        'RECOMMENDED_PRODUCT',
-        'PROBABILITY',
-        'BUY_RATE_PROXY',
-    ]
-    extra_cols = [col for col in asset_cols if col in df_ib_prob.columns]
-    return df_ib_prob[common_cols + extra_cols].copy()
-
-
-print("Loading data...")
-try:
-    df_master = load_master_data()
-except Exception as e:
-    print("Error loading real data:", e)
-    import sys
-    sys.exit(1)
-
-print("Master data shape:", df_master.shape)
-
-df_master['ECONOMIC_SEGMENT'] = df_master.apply(segment_for_economics, axis=1)
-df_master['IS_VIP'] = df_master['ECONOMIC_SEGMENT'].isin(VIP_SEGMENTS)
-df_master['TP'] = df_master['ECONOMIC_SEGMENT'].map(lambda x: FUM_MATRIX.get(x, FUM_MATRIX[DEFAULT_SEGMENT])['TP'])
-df_master['FP'] = df_master['ECONOMIC_SEGMENT'].map(lambda x: FUM_MATRIX.get(x, FUM_MATRIX[DEFAULT_SEGMENT])['FP'])
-df_master['FN'] = df_master['ECONOMIC_SEGMENT'].map(lambda x: FUM_MATRIX.get(x, FUM_MATRIX[DEFAULT_SEGMENT])['FN'])
-df_master['ASSET_SCORE'] = calculate_asset_score(df_master)
-
-
-def threshold_emu_formula(p, cr, cost, tp_val, fn_val, fp_val):
-    uplift = 4 * p * (1 - p) * cr
-    fp_probability = 1 - p - uplift
-    return uplift * (tp_val - fn_val) + fp_probability * fp_val - cost
-
-
-def calculate_channel_thresholds(channel_config=None, fp_multiplier=1.0):
-    if channel_config is None:
-        channel_config = channels
-    thresholds = {}
-    ps = np.linspace(0, 1, 5000)
-    for segment, economics in FUM_MATRIX.items():
-        thresholds[segment] = {}
-        for ch_name, ch_data in channel_config.items():
-            if ch_name == 'RM' and segment not in VIP_SEGMENTS:
-                thresholds[segment][ch_name] = None
-                continue
-            fp_val = economics['FP'] * fp_multiplier if segment in VIP_SEGMENTS else economics['FP']
-            emus = threshold_emu_formula(
-                ps,
-                ch_data['cr'],
-                ch_data['cost'],
-                economics['TP'],
-                economics['FN'],
-                fp_val,
-            )
-            valid_ps = ps[emus >= 0]
-            thresholds[segment][ch_name] = float(valid_ps[0]) if len(valid_ps) > 0 else None
-    return thresholds
-
-
-def load_thresholds_from_csv():
-    threshold_path = os.path.join(BASE_DIR, "thresholds.csv")
-    if not os.path.exists(threshold_path):
-        return None
-
-    df_thresholds = pd.read_csv(threshold_path)
-    segment_col = 'Segment' if 'Segment' in df_thresholds.columns else 'Persona'
-    thresholds = {}
-    column_map = {'SMS': 'Threshold SMS', 'Telesales': 'Threshold Telesales', 'RM': 'Threshold RM'}
-    for _, row in df_thresholds.iterrows():
-        segment = row[segment_col]
-        thresholds[segment] = {}
-        for ch_name, col_name in column_map.items():
-            value = row[col_name]
-            if pd.isna(value) or str(value) in {'N/A', 'No ROI'}:
-                thresholds[segment][ch_name] = None
-            else:
-                thresholds[segment][ch_name] = float(value)
-    return thresholds
-
-
-threshold_matrix = load_thresholds_from_csv() or calculate_channel_thresholds()
-
-
-def build_eligibility_matrix(df, thresholds):
-    eligible = np.full((len(df), len(channel_names)), False)
-    for channel_idx, ch_name in enumerate(channel_names):
-        segment_thresholds = df['ECONOMIC_SEGMENT'].map(
-            lambda segment: thresholds.get(segment, thresholds[DEFAULT_SEGMENT]).get(ch_name)
-        )
-        has_threshold = segment_thresholds.notna()
-        eligible[:, channel_idx] = has_threshold & (df['PROBABILITY'] >= segment_thresholds.astype(float))
-    return eligible
-
-
-def apply_threshold_filter(value_matrix, eligible_matrix):
-    return np.where(eligible_matrix, value_matrix, -999_999_999)
+    segment_cols += [col for col in asset_cols if col in df_segments.columns]
+    df = df_prob.merge(df_segments[segment_cols], on='CUSTOMER_NUMBER', how='left')
+    df['SEGMENT'] = df['SEGMENT'].fillna(DEFAULT_SEGMENT)
+    df['MAPPED_IB_SEGMENT'] = df['MAPPED_IB_SEGMENT'].fillna(df['SEGMENT'])
+    df['CUSTOMER_TYPE'] = df['CUSTOMER_TYPE'].fillna('IB')
+    df['SEGMENT_CLUSTER'] = df['SEGMENT']
+    df['ECONOMIC_SEGMENT'] = df.apply(segment_for_economics, axis=1)
+    df['IS_VIP'] = df['ECONOMIC_SEGMENT'].isin(VIP_SEGMENTS)
+    df['TP'] = df['ECONOMIC_SEGMENT'].map(lambda x: FUM_MATRIX.get(x, FUM_MATRIX[DEFAULT_SEGMENT])['TP'])
+    df['FP'] = df['ECONOMIC_SEGMENT'].map(lambda x: FUM_MATRIX.get(x, FUM_MATRIX[DEFAULT_SEGMENT])['FP'])
+    df['FN'] = df['ECONOMIC_SEGMENT'].map(lambda x: FUM_MATRIX.get(x, FUM_MATRIX[DEFAULT_SEGMENT])['FN'])
+    df['ASSET_SCORE'] = calculate_asset_score(df)
+    return df
 
 
 def calculate_emu(df, fp_multiplier=1.0, cr_multipliers=None):
@@ -193,15 +94,74 @@ def calculate_emu(df, fp_multiplier=1.0, cr_multipliers=None):
     for ch_name in channel_names:
         uplift = 4 * p_base * (1 - p_base) * channels[ch_name]['cr'] * cr_multipliers.get(ch_name, 1.0)
         fp_probability = 1 - p_base - uplift
-        emus.append(uplift * (tp_array - fn_array) + fp_probability * fp_array - channels[ch_name]['cost'])
+        emu = uplift * (tp_array - fn_array) + fp_probability * fp_array - channels[ch_name]['cost']
+        if ch_name == 'RM':
+            emu = np.where(df['IS_VIP'], emu, -999_999_999)
+        emus.append(emu + 1e-6 * df['ASSET_SCORE'])
+    return np.vstack(emus).T
 
-    tie_breaker = 1e-6 * df['ASSET_SCORE']
-    return np.vstack([emu + tie_breaker for emu in emus]).T
+
+def load_optimized_thresholds():
+    path = os.path.join(BASE_DIR, 'optimized_thresholds_ib.csv')
+    if not os.path.exists(path):
+        return None
+    thresholds = pd.read_csv(path)
+    thresholds = thresholds[thresholds['Threshold'].notna()].copy()
+    thresholds = thresholds[
+        thresholds['Optimization Status'].isin(['CAC feasible', 'Max EMU, CAC cap unmet'])
+    ]
+    return {
+        (row['Segment'], row['Product_or_Risk'], row['Channel']): float(row['Threshold'])
+        for _, row in thresholds.iterrows()
+    }
 
 
-eligibility_matrix = build_eligibility_matrix(df_master, threshold_matrix)
-print("Calculating Baseline EMU (Uplift Mode)...")
-emu_baseline = apply_threshold_filter(calculate_emu(df_master), eligibility_matrix)
+def build_eligibility_matrix(df, thresholds):
+    eligible = np.full((len(df), len(channel_names)), False)
+    if thresholds is None:
+        return np.ones_like(eligible, dtype=bool)
+
+    for channel_idx, ch_name in enumerate(channel_names):
+        keys = list(zip(df['MAPPED_IB_SEGMENT'], df['RECOMMENDED_PRODUCT'], [ch_name] * len(df)))
+        threshold_values = pd.Series([thresholds.get(key, np.nan) for key in keys], index=df.index)
+        eligible[:, channel_idx] = threshold_values.notna() & (df['PROBABILITY'] >= threshold_values.astype(float))
+    return eligible
+
+
+def compress_to_customer_channel(df, emu_matrix):
+    customers = (
+        df.sort_values('CUSTOMER_NUMBER')
+        .drop_duplicates('CUSTOMER_NUMBER')
+        [[
+            'CUSTOMER_NUMBER',
+            'CUSTOMER_TYPE',
+            'SEGMENT_CLUSTER',
+            'MAPPED_IB_SEGMENT',
+            'ECONOMIC_SEGMENT',
+            'IS_VIP',
+        ]]
+        .reset_index(drop=True)
+    )
+    customer_pos = {customer: idx for idx, customer in enumerate(customers['CUSTOMER_NUMBER'])}
+    compressed_emu = np.full((len(customers), len(channel_names)), -999_999_999.0)
+    selected_product = np.full((len(customers), len(channel_names)), None, dtype=object)
+    selected_probability = np.full((len(customers), len(channel_names)), np.nan)
+
+    for channel_idx, ch_name in enumerate(channel_names):
+        work = df[['CUSTOMER_NUMBER', 'RECOMMENDED_PRODUCT', 'PROBABILITY']].copy()
+        work['EMU'] = emu_matrix[:, channel_idx]
+        work = work[np.isfinite(work['EMU']) & (work['EMU'] > 0)]
+        if work.empty:
+            continue
+        idx = work.groupby('CUSTOMER_NUMBER')['EMU'].idxmax()
+        best = work.loc[idx]
+        for _, row in best.iterrows():
+            pos = customer_pos[row['CUSTOMER_NUMBER']]
+            compressed_emu[pos, channel_idx] = row['EMU']
+            selected_product[pos, channel_idx] = row['RECOMMENDED_PRODUCT']
+            selected_probability[pos, channel_idx] = row['PROBABILITY']
+
+    return customers, compressed_emu, selected_product, selected_probability
 
 
 def solve_allocation(emu_matrix):
@@ -221,11 +181,35 @@ def solve_allocation(emu_matrix):
     return total_profit, counts, cost, allocations
 
 
+print("Loading IB product-level data...")
+df_master = load_master_data()
+print("Product-level data shape:", df_master.shape)
+
+threshold_matrix = load_optimized_thresholds()
+if threshold_matrix is None:
+    print("WARNING: optimized_thresholds_ib.csv not found; no optimized threshold filter applied.")
+else:
+    print(f"Loaded optimized IB thresholds: {len(threshold_matrix):,} persona-product-channel rows")
+
+print("Calculating Baseline EMU and applying optimized thresholds...")
+eligibility_matrix = build_eligibility_matrix(df_master, threshold_matrix)
+emu_product = np.where(eligibility_matrix, calculate_emu(df_master), -999_999_999)
+df_customer, emu_baseline, product_by_channel, prob_by_channel = compress_to_customer_channel(df_master, emu_product)
+
 profit_base, counts_base, cost_base, alloc_base = solve_allocation(emu_baseline)
 
 assigned_indices = np.where(alloc_base == 1)
-df_master['RECOMMENDED_CHANNEL'] = 'None'
-df_master.loc[assigned_indices[0], 'RECOMMENDED_CHANNEL'] = channel_names[assigned_indices[1]]
+df_customer['RECOMMENDED_CHANNEL'] = 'None'
+df_customer['RECOMMENDED_PRODUCT'] = None
+df_customer['PROBABILITY'] = np.nan
+df_customer['CAMPAIGN_COST'] = 0
+df_customer['CAMPAIGN_EMU'] = 0.0
+df_customer.loc[assigned_indices[0], 'RECOMMENDED_CHANNEL'] = channel_names[assigned_indices[1]]
+for row_pos, channel_pos in zip(*assigned_indices):
+    df_customer.loc[row_pos, 'RECOMMENDED_PRODUCT'] = product_by_channel[row_pos, channel_pos]
+    df_customer.loc[row_pos, 'PROBABILITY'] = prob_by_channel[row_pos, channel_pos]
+    df_customer.loc[row_pos, 'CAMPAIGN_COST'] = channel_costs[channel_pos]
+    df_customer.loc[row_pos, 'CAMPAIGN_EMU'] = emu_baseline[row_pos, channel_pos]
 
 output_cols = [
     'CUSTOMER_NUMBER',
@@ -235,29 +219,36 @@ output_cols = [
     'RECOMMENDED_PRODUCT',
     'PROBABILITY',
     'RECOMMENDED_CHANNEL',
+    'CAMPAIGN_COST',
+    'CAMPAIGN_EMU',
 ]
 out_alloc = os.path.join(BASE_DIR, "final_allocations.csv")
-df_master[output_cols].to_csv(out_alloc, index=False)
+df_customer[output_cols].to_csv(out_alloc, index=False)
 
 print("Baseline Results:")
+print(f"Customers: {len(df_customer):,}")
 print(f"Profit: {profit_base:,.0f}")
 print(f"Cost: {cost_base:,.0f}")
 print(f"Allocations: SMS={counts_base[0]}, Tele={counts_base[1]}, RM={counts_base[2]}")
 
 print("\nSample Allocation Output:")
-print(frame_to_markdown(df_master[output_cols].head(5)))
+print(frame_to_markdown(df_customer[output_cols].head(5)))
 
 print("\nCalculating Stress-Test (FP VIP cost +20%, CR -15% for Telesales and RM)...")
 stress_cr_multipliers = {'SMS': 1.0, 'Telesales': 0.85, 'RM': 0.85}
-stress_channels = {
-    ch_name: {**ch_data, 'cr': ch_data['cr'] * stress_cr_multipliers.get(ch_name, 1.0)}
-    for ch_name, ch_data in channels.items()
-}
-emu_stress = calculate_emu(df_master, fp_multiplier=1.2, cr_multipliers=stress_cr_multipliers)
-alloc_stress = alloc_base
-profit_stress = np.sum(alloc_stress * emu_stress)
-counts_stress = np.sum(alloc_stress, axis=0)
-cost_stress = np.sum(alloc_stress * channel_costs)
+profit_stress = 0.0
+paid_customer = df_customer[df_customer['RECOMMENDED_CHANNEL'] != 'None'].copy()
+for _, row in paid_customer.iterrows():
+    ch_name = row['RECOMMENDED_CHANNEL']
+    economics = FUM_MATRIX.get(row['ECONOMIC_SEGMENT'], FUM_MATRIX[DEFAULT_SEGMENT])
+    p = row['PROBABILITY']
+    cr = channels[ch_name]['cr'] * stress_cr_multipliers.get(ch_name, 1.0)
+    fp = economics['FP'] * (1.2 if row['IS_VIP'] else 1.0)
+    uplift = 4 * p * (1 - p) * cr
+    fp_probability = 1 - p - uplift
+    profit_stress += uplift * (economics['TP'] - economics['FN']) + fp_probability * fp - channels[ch_name]['cost']
+counts_stress = np.sum(alloc_base, axis=0)
+cost_stress = np.sum(alloc_base * channel_costs)
 
 print("Stress Results:")
 print(f"Profit: {profit_stress:,.0f}")

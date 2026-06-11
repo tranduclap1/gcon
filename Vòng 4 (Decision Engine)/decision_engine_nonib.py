@@ -247,6 +247,20 @@ def solve_retention_allocation(df):
     return result
 
 
+def load_nonib_percentile_thresholds():
+    path = os.path.join(BASE_DIR, 'optimized_thresholds_nonib.csv')
+    if not os.path.exists(path):
+        return {}
+    thresholds = pd.read_csv(path)
+    thresholds = thresholds[
+        (thresholds['Threshold'].notna())
+        & thresholds['Optimization Status'].isin(['CAC feasible', 'Max EMU, CAC cap unmet'])
+    ].copy()
+    # Current grouped MILP works at cluster level, so use the least restrictive
+    # channel cutoff as the auto-brake gate for the cluster candidate pool.
+    return thresholds.groupby('Segment')['Threshold'].min().to_dict()
+
+
 print("Loading Non-IB retention data...")
 df_master = load_nonib_personas()
 churn_panel = build_churn_panel(df_master['CUSTOMER_NUMBER'].drop_duplicates())
@@ -268,6 +282,12 @@ df_master['TP'] = TP_RETENTION
 df_master['FP'] = FP_CONTACT
 df_master['FN'] = df_master['CLUSTER'].map(FN_BY_CLUSTER).fillna(0)
 df_master['ASSET_SCORE'] = calculate_asset_score(df_master)
+df_master['EXPECTED_LOSS_SCORE'] = df_master['P_CHURN'] * df_master['CLV_5YR']
+df_master['LOSS_PERCENTILE'] = (
+    df_master.groupby('SEGMENT_CLUSTER')['EXPECTED_LOSS_SCORE']
+    .rank(method='average', pct=True)
+    .fillna(0.0)
+)
 df_master['RECOMMENDED_PRODUCT'] = 'Retention'
 df_master['EMU_SMS'] = emu(df_master['P_CHURN'], df_master['TP'], df_master['FN'], 'SMS')
 df_master['EMU_TELESALES'] = emu(df_master['P_CHURN'], df_master['TP'], df_master['FN'], 'Telesales')
@@ -275,7 +295,15 @@ df_master['EMU_RM'] = emu(df_master['P_CHURN'], df_master['TP'], df_master['FN']
 df_master.loc[~df_master['CLUSTER'].isin(VIP_CLUSTERS), 'EMU_RM'] = -999_999_999
 
 # P0 and customers outside the historical at-risk base are not paid retention targets.
-eligible_mask = (df_master['CLUSTER'] != -1) & (df_master['CHURN_AT_RISK'] == 1)
+threshold_by_segment = load_nonib_percentile_thresholds()
+segment_cutoff = df_master['SEGMENT_CLUSTER'].map(threshold_by_segment).fillna(0.0)
+eligible_mask = (
+    (df_master['CLUSTER'] != -1)
+    & (df_master['CHURN_AT_RISK'] == 1)
+    & (df_master['LOSS_PERCENTILE'] >= segment_cutoff)
+)
+if threshold_by_segment:
+    print(f"Applied optimized Non-IB percentile thresholds for {len(threshold_by_segment)} clusters")
 allocated = solve_retention_allocation(df_master[eligible_mask])
 df_master['RECOMMENDED_CHANNEL'] = 'None'
 df_master['CAMPAIGN_COST'] = 0
@@ -383,6 +411,8 @@ output_cols = [
     'RUNOFF_RISK',
     'EFFECTIVE_CHURN_SCORE',
     'CLV_5YR',
+    'EXPECTED_LOSS_SCORE',
+    'LOSS_PERCENTILE',
     'TP',
     'FP',
     'FN',
