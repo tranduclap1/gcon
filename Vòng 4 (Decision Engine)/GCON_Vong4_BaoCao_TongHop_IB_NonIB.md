@@ -258,7 +258,20 @@ Nhận xét:
 - Telesales là kênh human chủ lực của IB vì có tỷ lệ EMU/COGS tốt hơn RM trong điều kiện budget 450M.
 - RM chỉ được gán 6 khách do chi phí mỗi lượt cao, chỉ phù hợp với một số trường hợp EMU rất cao.
 
-### 4.6 Stress test IB
+### 4.6 Allocation theo segment IB
+
+| Segment | N | SMS | Telesales | RM | None | Cost | EMU |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| V3_Multi_Premium | 240 | 5 | 33 | 0 | 202 | 1.68M | 23.7M |
+| V1_HV_Borrower | 6,260 | 670 | 3,310 | 1 | 2,279 | 170.85M | 1,664.0M |
+| V2_Conservative | 3,873 | 225 | 1,600 | 5 | 2,043 | 91.13M | 1,842.2M |
+| N1_Active_Digital | 6,531 | 983 | 443 | 0 | 5,105 | 27.07M | 137.8M |
+| N3_Dormant | 60,223 | 18,075 | 299 | 0 | 41,849 | 105.33M | 968.1M |
+| N2_Semi_Digital | 47,759 | 7,443 | 308 | 0 | 40,008 | 52.62M | 473.9M |
+
+Nhìn theo segment, phần lớn RM nằm ở `V2_Conservative` và `V1_HV_Borrower`, đúng với logic VIP/high-value. `N3_Dormant` nhận nhiều SMS vì population lớn và SMS là kênh chi phí thấp để kích hoạt lại.
+
+### 4.7 Stress test IB
 
 Kịch bản stress:
 

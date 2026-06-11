@@ -153,7 +153,25 @@ Doc ket qua:
 
 ---
 
-## 7. Stress Test
+## 7. Allocation theo segment IB
+
+| Segment | N | SMS | Telesales | RM | None | Cost | EMU |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| V3_Multi_Premium | 240 | 5 | 33 | 0 | 202 | 1.68M | 23.7M |
+| V1_HV_Borrower | 6,260 | 670 | 3,310 | 1 | 2,279 | 170.85M | 1,664.0M |
+| V2_Conservative | 3,873 | 225 | 1,600 | 5 | 2,043 | 91.13M | 1,842.2M |
+| N1_Active_Digital | 6,531 | 983 | 443 | 0 | 5,105 | 27.07M | 137.8M |
+| N3_Dormant | 60,223 | 18,075 | 299 | 0 | 41,849 | 105.33M | 968.1M |
+| N2_Semi_Digital | 47,759 | 7,443 | 308 | 0 | 40,008 | 52.62M | 473.9M |
+
+Doc ket qua:
+
+- `V1_HV_Borrower` va `V2_Conservative` nhan gan toan bo Telesales/RM vi la nhom high-value co opportunity loss cao.
+- `N3_Dormant` va `N2_Semi_Digital` duoc tiep can chu yeu bang SMS de toi uu scale va tranh dot chi phi human-touch.
+
+---
+
+## 8. Stress Test
 
 Kich ban stress:
 
