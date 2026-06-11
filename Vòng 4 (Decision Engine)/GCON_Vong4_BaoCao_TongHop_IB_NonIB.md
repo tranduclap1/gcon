@@ -410,18 +410,22 @@ EXPECTED_LOSS_SCORE = P_CHURN_cluster × CLV_5YR
 LOSS_PERCENTILE = percentile_rank(EXPECTED_LOSS_SCORE within cluster)
 ```
 
-Threshold optimization được chạy theo `cluster/persona × channel` trên percentile này. Vì `P_CHURN` hiện ở cấp cluster, percentile giúp đưa threshold về dạng phần trăm xếp hạng rủi ro-giá trị, đồng thời vẫn cá nhân hóa trong cùng cluster bằng `CLV_5YR`.
+Threshold optimization được chạy theo `cluster/persona × channel` trên percentile này. Vì `P_CHURN` hiện ở cấp cluster, percentile giúp đưa threshold về dạng phần trăm xếp hạng rủi ro-giá trị, đồng thời vẫn cá nhân hóa trong cùng cluster bằng `CLV_5YR`. Khách được đưa vào candidate pool nếu:
 
-| Cluster | SMS percentile cutoff | Target top expected-loss | Selected SMS | CAC SMS | Status |
-|---|---:|---:|---:|---:|---|
-| C0_Traditional | 25.36% | 74.64% | 59,861 | 1.02M | CAC feasible |
-| C1_HV_Traditional | 2.33% | 97.67% | 470 | 0.88M | CAC feasible |
-| C2_Senior_HV | 0.36% | 99.64% | 511 | 0.50M | CAC feasible |
-| C3_Ultra_Saver | 0.33% | 99.67% | 393 | 0.26M | CAC feasible |
-| C4_Multi_Saver | 2.13% | 97.88% | 591 | 0.45M | CAC feasible |
-| C5_HV_Saver | 0.01% | 99.99% | 10,542 | 0.44M | CAC feasible |
-| C6_Stable_Senior | 0.02% | 99.98% | 4,860 | 1.52M | Max EMU, CAC cap unmet |
-| C7_HV_Borrower | 0.15% | 99.85% | 596 | 1.84M | Max EMU, CAC cap unmet |
+```text
+LOSS_PERCENTILE >= threshold_cluster,channel
+```
+
+| Cluster | SMS cutoff | Telesales cutoff | RM cutoff |
+|---|---:|---:|---:|
+| C3_Ultra_Saver | 0.33% | 0.33% | 0.33% |
+| C5_HV_Saver | 0.01% | 0.01% | 0.01% |
+| C4_Multi_Saver | 2.12% | 2.12% | 2.12% |
+| C2_Senior_HV | 0.36% | 0.36% | 0.36% |
+| C1_HV_Traditional | 2.33% | 2.33% | 2.33% |
+| C0_Traditional | 25.36% | 25.36% | N/A |
+| C6_Stable_Senior | 0.02% | 0.02% | No ROI |
+| C7_HV_Borrower | 0.15% | 0.15% | No ROI |
 
 File đầy đủ nằm ở `optimized_thresholds_nonib.csv`; bảng này có cả SMS, Telesales và RM.
 
