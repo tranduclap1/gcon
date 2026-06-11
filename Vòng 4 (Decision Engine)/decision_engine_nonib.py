@@ -195,14 +195,14 @@ def threshold_for_channel(fn, channel):
     return float(valid[0]) if len(valid) else None
 
 
-def solve_retention_allocation(df):
+def solve_retention_allocation(df, threshold_by_segment_channel):
     result = df.copy()
     result['RECOMMENDED_CHANNEL'] = 'None'
     result['CAMPAIGN_COST'] = 0
     result['CAMPAIGN_EMU'] = 0.0
 
     group_table = (
-        result.groupby('CLUSTER', as_index=False)
+        result.groupby(['CLUSTER', 'SEGMENT_CLUSTER'], as_index=False)
         .agg(
             CUSTOMER_COUNT=('CUSTOMER_NUMBER', 'count'),
             EMU_SMS=('EMU_SMS', 'first'),
@@ -212,6 +212,23 @@ def solve_retention_allocation(df):
         .sort_values('CLUSTER')
         .reset_index(drop=True)
     )
+    eligible_counts = np.zeros((len(group_table), len(channel_names)), dtype=int)
+    for group_pos, row in group_table.iterrows():
+        cluster_pool = result[result['CLUSTER'] == row['CLUSTER']]
+        segment = row['SEGMENT_CLUSTER']
+        for channel_pos, channel_name in enumerate(channel_names):
+            cutoff = threshold_by_segment_channel.get((segment, channel_name))
+            if cutoff is None or pd.isna(cutoff):
+                eligible_counts[group_pos, channel_pos] = 0
+                continue
+            emu_col = f'EMU_{channel_name.upper()}' if channel_name != 'Telesales' else 'EMU_TELESALES'
+            eligible_counts[group_pos, channel_pos] = int(
+                (
+                    (cluster_pool['LOSS_PERCENTILE'] >= cutoff)
+                    & (cluster_pool[emu_col] > 0)
+                ).sum()
+            )
+
     emu_matrix = group_table[['EMU_SMS', 'EMU_TELESALES', 'EMU_RM']].to_numpy()
     milp_result = solve_grouped_channel_milp(
         emu_matrix,
@@ -221,28 +238,37 @@ def solve_retention_allocation(df):
         np.array([0, 1, 1]),
         HUMAN_CAP,
         min_channel_counts=np.array([0, 0, MIN_RM_ALLOCATIONS]),
+        max_group_channel_counts=eligible_counts,
+        nested_group_channel_counts=eligible_counts,
     )
     print(f"Non-IB MILP allocation status: {milp_result['status']} - {milp_result['message']}")
 
     allocation_counts = milp_result['counts']
-    for group_pos, cluster in enumerate(group_table['CLUSTER']):
-        cluster_pool = result[result['CLUSTER'] == cluster].sort_values(
-            ['ASSET_SCORE', 'CUSTOMER_NUMBER'],
-            ascending=[False, True],
-        )
-        start = 0
-        for channel_pos, channel_name in enumerate(channel_names):
+    for group_pos, row in group_table.iterrows():
+        cluster_pool = result[result['CLUSTER'] == row['CLUSTER']]
+        used_idx = set()
+        for channel_pos, channel_name in sorted(enumerate(channel_names), reverse=True):
             take = int(allocation_counts[group_pos, channel_pos])
             if take <= 0:
                 continue
-            selected_idx = cluster_pool.iloc[start:start + take].index
+            cutoff = threshold_by_segment_channel.get((row['SEGMENT_CLUSTER'], channel_name), 1.0)
+            emu_col = f'EMU_{channel_name.upper()}' if channel_name != 'Telesales' else 'EMU_TELESALES'
+            channel_pool = cluster_pool[
+                (cluster_pool['LOSS_PERCENTILE'] >= cutoff)
+                & (cluster_pool[emu_col] > 0)
+                & (~cluster_pool.index.isin(used_idx))
+            ].sort_values(
+                ['LOSS_PERCENTILE', 'ASSET_SCORE', 'CUSTOMER_NUMBER'],
+                ascending=[False, False, True],
+            )
+            selected_idx = channel_pool.head(take).index
+            used_idx.update(selected_idx)
             result.loc[selected_idx, 'RECOMMENDED_CHANNEL'] = channel_name
             result.loc[selected_idx, 'CAMPAIGN_COST'] = channel_costs[channel_pos]
             result.loc[selected_idx, 'CAMPAIGN_EMU'] = group_table.loc[
                 group_pos,
                 f'EMU_{channel_name.upper()}' if channel_name != 'Telesales' else 'EMU_TELESALES',
             ]
-            start += take
 
     return result
 
@@ -256,9 +282,10 @@ def load_nonib_percentile_thresholds():
         (thresholds['Threshold'].notna())
         & thresholds['Optimization Status'].isin(['CAC feasible', 'Max EMU, CAC cap unmet'])
     ].copy()
-    # Current grouped MILP works at cluster level, so use the least restrictive
-    # channel cutoff as the auto-brake gate for the cluster candidate pool.
-    return thresholds.groupby('Segment')['Threshold'].min().to_dict()
+    return {
+        (row['Segment'], row['Channel']): float(row['Threshold'])
+        for _, row in thresholds.iterrows()
+    }
 
 
 print("Loading Non-IB retention data...")
@@ -296,15 +323,13 @@ df_master.loc[~df_master['CLUSTER'].isin(VIP_CLUSTERS), 'EMU_RM'] = -999_999_999
 
 # P0 and customers outside the historical at-risk base are not paid retention targets.
 threshold_by_segment = load_nonib_percentile_thresholds()
-segment_cutoff = df_master['SEGMENT_CLUSTER'].map(threshold_by_segment).fillna(0.0)
 eligible_mask = (
     (df_master['CLUSTER'] != -1)
     & (df_master['CHURN_AT_RISK'] == 1)
-    & (df_master['LOSS_PERCENTILE'] >= segment_cutoff)
 )
 if threshold_by_segment:
-    print(f"Applied optimized Non-IB percentile thresholds for {len(threshold_by_segment)} clusters")
-allocated = solve_retention_allocation(df_master[eligible_mask])
+    print(f"Applied optimized Non-IB percentile thresholds for {len(threshold_by_segment)} cluster-channel pairs")
+allocated = solve_retention_allocation(df_master[eligible_mask], threshold_by_segment)
 df_master['RECOMMENDED_CHANNEL'] = 'None'
 df_master['CAMPAIGN_COST'] = 0
 df_master['CAMPAIGN_EMU'] = 0.0

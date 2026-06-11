@@ -163,6 +163,8 @@ def solve_grouped_channel_milp(
     human_cap,
     *,
     min_channel_counts=None,
+    max_group_channel_counts=None,
+    nested_group_channel_counts=None,
     min_emu=0.0,
     time_limit=180,
     mip_rel_gap=0.001,
@@ -176,7 +178,12 @@ def solve_grouped_channel_milp(
 
     selectable = np.isfinite(group_emu_matrix) & (group_emu_matrix > min_emu)
     objective = -group_emu_matrix.ravel()
-    upper_bounds = (selectable * group_sizes[:, None]).ravel()
+    if max_group_channel_counts is None:
+        max_group_channel_counts = group_sizes[:, None]
+    else:
+        max_group_channel_counts = np.asarray(max_group_channel_counts, dtype=float)
+        max_group_channel_counts = np.minimum(max_group_channel_counts, group_sizes[:, None])
+    upper_bounds = (selectable * max_group_channel_counts).ravel()
     bounds = Bounds(np.zeros(n_vars), upper_bounds)
 
     costs = np.tile(channel_costs, n_groups)
@@ -198,6 +205,18 @@ def solve_grouped_channel_milp(
             rows.append(csr_matrix(channel_row.reshape(1, -1)))
             lower.append(min_count)
             upper.append(np.inf)
+
+    if nested_group_channel_counts is not None:
+        nested_group_channel_counts = np.asarray(nested_group_channel_counts, dtype=float)
+        for group_idx in range(n_groups):
+            for channel_idx in range(n_channels):
+                nested_row = np.zeros(n_vars)
+                start = group_idx * n_channels + channel_idx
+                stop = (group_idx + 1) * n_channels
+                nested_row[start:stop] = 1
+                rows.append(csr_matrix(nested_row.reshape(1, -1)))
+                lower.append(0)
+                upper.append(nested_group_channel_counts[group_idx, channel_idx])
 
     row_index = np.repeat(np.arange(n_groups), n_channels)
     col_index = np.arange(n_vars)

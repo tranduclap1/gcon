@@ -133,6 +133,16 @@ def solve_nonib_scenario(name, budget, cr_multipliers=None, fp_multiplier=1.0):
     summary = pd.read_csv(os.path.join(BASE_DIR, 'nonib_retention_cluster_summary.csv'))
     summary = summary[summary['AT_RISK'] > 0].copy().sort_values('CLUSTER').reset_index(drop=True)
     summary['FN'] = summary['CLUSTER'].map(lambda c: -30_000_000 if c in VIP_CLUSTERS else 0)
+    alloc = pd.read_csv(os.path.join(BASE_DIR, 'final_allocations_nonib.csv'))
+    thresholds = pd.read_csv(os.path.join(BASE_DIR, 'optimized_thresholds_nonib.csv'))
+    thresholds = thresholds[
+        thresholds['Threshold'].notna()
+        & thresholds['Optimization Status'].isin(['CAC feasible', 'Max EMU, CAC cap unmet'])
+    ]
+    threshold_map = {
+        (row['Segment'], row['Channel']): float(row['Threshold'])
+        for _, row in thresholds.iterrows()
+    }
 
     emu_cols = []
     for channel in CHANNEL_NAMES:
@@ -147,6 +157,16 @@ def solve_nonib_scenario(name, budget, cr_multipliers=None, fp_multiplier=1.0):
             values = values.where(summary['CLUSTER'].isin(VIP_CLUSTERS), -999_999_999)
         emu_cols.append(values)
     emu_matrix = np.vstack(emu_cols).T
+    max_counts = np.zeros_like(emu_matrix, dtype=int)
+    for group_idx, row in summary.iterrows():
+        pool = alloc[(alloc['SEGMENT_CLUSTER'] == row['SEGMENT_CLUSTER']) & (alloc['CHURN_AT_RISK'] == 1)]
+        for channel_idx, channel in enumerate(CHANNEL_NAMES):
+            cutoff = threshold_map.get((row['SEGMENT_CLUSTER'], channel))
+            if cutoff is None:
+                continue
+            max_counts[group_idx, channel_idx] = int(
+                ((pool['LOSS_PERCENTILE'] >= cutoff) & (emu_matrix[group_idx, channel_idx] > 0)).sum()
+            )
 
     min_rm = NONIB_MIN_RM if budget >= CHANNELS['RM']['cost'] * NONIB_MIN_RM else 0
     result = solve_grouped_channel_milp(
@@ -157,6 +177,8 @@ def solve_nonib_scenario(name, budget, cr_multipliers=None, fp_multiplier=1.0):
         HUMAN_MASK,
         NONIB_HUMAN_CAP,
         min_channel_counts=np.array([0, 0, min_rm]),
+        max_group_channel_counts=max_counts,
+        nested_group_channel_counts=max_counts,
     )
     counts = result['counts']
     expected_retained = 0.0

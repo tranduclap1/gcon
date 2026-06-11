@@ -410,7 +410,7 @@ EXPECTED_LOSS_SCORE = P_CHURN_cluster × CLV_5YR
 LOSS_PERCENTILE = percentile_rank(EXPECTED_LOSS_SCORE within cluster)
 ```
 
-Threshold optimization được chạy theo `cluster/persona × channel` trên percentile này. Vì `P_CHURN` hiện ở cấp cluster, percentile giúp đưa threshold về dạng phần trăm xếp hạng rủi ro-giá trị, đồng thời vẫn cá nhân hóa trong cùng cluster bằng `CLV_5YR`. Khách được đưa vào candidate pool nếu:
+Threshold optimization được chạy theo `cluster/persona × channel` trên percentile này. Vì `P_CHURN` hiện ở cấp cluster, percentile giúp đưa threshold về dạng phần trăm xếp hạng rủi ro-giá trị, đồng thời vẫn cá nhân hóa trong cùng cluster bằng `CLV_5YR`. Để phản ánh vai trò vận hành của từng kênh, engine áp dụng thêm channel-intensity floor: SMS có thể target rộng, Telesales chỉ xét top 30% expected-loss, và RM chỉ xét top 5% expected-loss. Khách được đưa vào candidate pool nếu:
 
 ```text
 LOSS_PERCENTILE >= threshold_cluster,channel
@@ -418,14 +418,14 @@ LOSS_PERCENTILE >= threshold_cluster,channel
 
 | Cluster | SMS cutoff | Telesales cutoff | RM cutoff |
 |---|---:|---:|---:|
-| C3_Ultra_Saver | 0.33% | 0.33% | 0.33% |
-| C5_HV_Saver | 0.01% | 0.01% | 0.01% |
-| C4_Multi_Saver | 2.12% | 2.12% | 2.12% |
-| C2_Senior_HV | 0.36% | 0.36% | 0.36% |
-| C1_HV_Traditional | 2.33% | 2.33% | 2.33% |
-| C0_Traditional | 25.36% | 25.36% | N/A |
-| C6_Stable_Senior | 0.02% | 0.02% | No ROI |
-| C7_HV_Borrower | 0.15% | 0.15% | No ROI |
+| C3_Ultra_Saver | 0.33% | 70.00% | 95.00% |
+| C5_HV_Saver | 0.01% | 70.00% | 95.00% |
+| C4_Multi_Saver | 2.12% | 70.00% | 95.00% |
+| C2_Senior_HV | 0.36% | 70.00% | 95.00% |
+| C1_HV_Traditional | 2.33% | 70.00% | 95.00% |
+| C0_Traditional | 25.36% | 70.00% | N/A |
+| C6_Stable_Senior | 0.02% | 70.00% | No ROI |
+| C7_HV_Borrower | 0.15% | 70.00% | No ROI |
 
 File đầy đủ nằm ở `optimized_thresholds_nonib.csv`; bảng này có cả SMS, Telesales và RM.
 

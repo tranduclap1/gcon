@@ -25,6 +25,11 @@ IB_CAC_CAP = 750_000
 NONIB_CAC_CAP = 1_500_000
 TP_RETENTION = 50_000_000
 FP_CONTACT = -50_000
+NONIB_CHANNEL_PERCENTILE_FLOOR = {
+    'SMS': 0.00,
+    'Telesales': 0.70,
+    'RM': 0.95,
+}
 
 
 def uplift(p, channel):
@@ -49,7 +54,7 @@ def first_break_even(values, scores):
     return float(valid.min()) if len(valid) else np.nan
 
 
-def optimize_threshold(df, score_col, emu_col, channel, cac_cap):
+def optimize_threshold(df, score_col, emu_col, channel, cac_cap, min_threshold=None):
     if df.empty:
         return None
 
@@ -73,13 +78,14 @@ def optimize_threshold(df, score_col, emu_col, channel, cac_cap):
             'Optimization Status': 'No ROI',
         }
 
+    threshold_floor = break_even if min_threshold is None else max(break_even, min_threshold)
     candidate_thresholds = np.unique(
         np.concatenate([
-            [break_even],
+            [threshold_floor],
             np.quantile(scores, np.linspace(0, 1, 101)),
         ])
     )
-    candidate_thresholds = candidate_thresholds[candidate_thresholds >= break_even]
+    candidate_thresholds = candidate_thresholds[candidate_thresholds >= threshold_floor]
 
     best = None
     fallback = None
@@ -231,6 +237,7 @@ def optimize_nonib_thresholds():
                 'EMU',
                 channel,
                 NONIB_CAC_CAP,
+                min_threshold=NONIB_CHANNEL_PERCENTILE_FLOOR.get(channel, 0.0),
             )
             if chosen is None:
                 continue

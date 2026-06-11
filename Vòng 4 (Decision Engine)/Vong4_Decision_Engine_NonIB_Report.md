@@ -68,7 +68,47 @@ EMU_c(P) = uplift_c(P) * (TP - FN)
 
 ---
 
-## 4. MILP Solver
+## 4. Optimized Threshold Vector
+
+Do Non-IB khong co NBFO product probability, threshold khong dung xac suat mua san pham ma dung percentile cua expected loss trong tung cluster:
+
+```text
+EXPECTED_LOSS_SCORE_i = P_CHURN_cluster * CLV_5YR_i
+LOSS_PERCENTILE_i = percentile_rank(EXPECTED_LOSS_SCORE_i within cluster)
+```
+
+Grid search duoc chay doc lap truoc MILP theo `cluster x channel`. Moi channel co candidate pool rieng:
+
+```text
+Eligible[i,c] = 1 neu CHURN_AT_RISK_i = 1
+                 va LOSS_PERCENTILE_i >= threshold[cluster,c]
+                 va EMU[cluster,c] > 0
+```
+
+De tranh SMS/Telesales/RM co cung cutoff, engine them channel-intensity floor: SMS target rong, Telesales chi xet top 30% expected-loss, RM chi xet top 5% expected-loss. Vi cac pool nay long nhau, MILP enforce nested constraint:
+
+```text
+y[g,RM] <= top5[g]
+y[g,Telesales] + y[g,RM] <= top30[g]
+y[g,SMS] + y[g,Telesales] + y[g,RM] <= SMS_eligible[g]
+```
+
+| Cluster | SMS cutoff | Telesales cutoff | RM cutoff |
+|---|---:|---:|---:|
+| C3_Ultra_Saver | 0.33% | 70.00% | 95.00% |
+| C5_HV_Saver | 0.01% | 70.00% | 95.00% |
+| C4_Multi_Saver | 2.12% | 70.00% | 95.00% |
+| C2_Senior_HV | 0.36% | 70.00% | 95.00% |
+| C1_HV_Traditional | 2.33% | 70.00% | 95.00% |
+| C0_Traditional | 25.36% | 70.00% | N/A |
+| C6_Stable_Senior | 0.02% | 70.00% | No ROI |
+| C7_HV_Borrower | 0.15% | 70.00% | No ROI |
+
+Full threshold matrix nam trong `optimized_thresholds_nonib.csv`.
+
+---
+
+## 5. MILP Solver
 
 Non-IB co nhieu khach trong cung cluster co cung `P_CHURN`, `TP`, `FP`, `FN`, nen MILP duoc solve o cap cluster-channel bang bien nguyen:
 
@@ -89,15 +129,16 @@ sum_c y[g,c] <= AT_RISK_CUSTOMERS[g]          moi cluster khong vuot so khach at
 sum_g sum_c cost[c] * y[g,c] <= 550M          budget constraint
 sum_g (y[g,Telesales] + y[g,RM]) <= 4,000     human-touch cap
 y[g,c] = 0 neu EMU[g,c] <= 0 hoac channel khong eligible
+y[g,c] khong vuot candidate pool sau threshold cua channel do
 ```
 
-Sau khi MILP tra ve so luong theo cluster-channel, engine bung ra customer-level output. Trong cung mot cluster, EMU cua cac khach la nhu nhau; `ASSET_SCORE` chi dung de chon ID on dinh khi bung allocation, khong phai de giai bai toan toi uu.
+Sau khi MILP tra ve so luong theo cluster-channel, engine bung ra customer-level output theo thu tu `LOSS_PERCENTILE` va `ASSET_SCORE`. `LOSS_PERCENTILE` dung de uu tien khach co expected loss cao hon trong cung cluster; MILP van la buoc toi uu allocation chinh.
 
 Solver: `scipy.optimize.milp` voi HiGHS. Ket qua baseline tra ve optimal.
 
 ---
 
-## 5. Channel va constraints
+## 6. Channel va constraints
 
 | Kenh | Cost | CR | Vai tro |
 |---|---:|---:|---|
@@ -123,7 +164,7 @@ Best normalized score: IB 450M / Non-IB 550M, human 6000 / 4000
 
 ---
 
-## 6. Churn Rate theo cluster
+## 7. Churn Rate theo cluster
 
 | Cluster | At Risk | Hard Churn | Runoff Risk | Effective Churn | P Churn |
 |---|---:|---:|---:|---:|---:|
@@ -146,7 +187,7 @@ Doc ket qua:
 
 ---
 
-## 7. Baseline Allocation
+## 8. Baseline Allocation
 
 MILP status: optimal.
 
@@ -157,58 +198,58 @@ MILP status: optimal.
 | Hard churn proxy | 3,876 |
 | Runoff risk proxy | 8,472 |
 | Effective churn score | 6,417.6 |
-| SMS allocated | 66,680 |
-| Telesales | 292 |
+| SMS allocated | 68,420 |
+| Telesales | 118 |
 | RM | 101 |
-| None | 59,927 |
+| None | 58,361 |
 | Cost | 550,000,000 VND |
-| Campaign EMU | 22,910,966,121 VND |
-| Expected retained customers | 422.82 |
-| CLV at risk targeted | 116,589,517,118 VND |
-| Human-touch used | 393 / 4,000 |
+| Campaign EMU | 22,473,259,443 VND |
+| Expected retained customers | 421.15 |
+| CLV at risk targeted | 116,608,591,477 VND |
+| Human-touch used | 219 / 4,000 |
 
 Budget binding:
 
 ```text
-66,680 * 5,000 + 292 * 50,000 + 101 * 2,000,000 = 550,000,000 VND
+68,420 * 5,000 + 118 * 50,000 + 101 * 2,000,000 = 550,000,000 VND
 ```
 
-Budget binding dung 550M. Human cap chua binding hoan toan vi budget het truoc. RM duoc dung cho nhom co gia tri/rui ro cao, nhung tong so luot RM van rat nho do chi phi moi luot cao so voi SMS/Telesales.
+Budget binding dung 550M. Human cap chua binding hoan toan vi budget het truoc. Sau khi enforce threshold theo channel, Telesales chi duoc lay trong top 30% expected-loss nen so luot Telesales giam; phan budget con lai duoc day sang SMS la kenh scale.
 
 ---
 
-## 8. Allocation theo cluster
+## 9. Allocation theo cluster
 
 | Cluster | N | SMS | Telesales | RM | None | Cost | EMU |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| C3_Ultra_Saver | 912 | 0 | 292 | 101 | 519 | 216.60M | 2,058.4M |
-| C5_HV_Saver | 13,178 | 10,542 | 0 | 0 | 2,636 | 52.71M | 9,113.5M |
+| C3_Ultra_Saver | 912 | 260 | 118 | 15 | 519 | 37.20M | 979.4M |
+| C5_HV_Saver | 13,178 | 10,456 | 0 | 86 | 2,636 | 224.28M | 9,451.1M |
 | C4_Multi_Saver | 800 | 591 | 0 | 0 | 209 | 2.96M | 500.2M |
 | C2_Senior_HV | 562 | 511 | 0 | 0 | 51 | 2.56M | 385.0M |
 | C1_HV_Traditional | 493 | 470 | 0 | 0 | 23 | 2.35M | 188.8M |
-| C0_Traditional | 80,038 | 49,706 | 0 | 0 | 30,332 | 248.53M | 9,639.2M |
+| C0_Traditional | 80,038 | 51,272 | 0 | 0 | 28,766 | 256.36M | 9,942.9M |
 | C6_Stable_Senior | 5,794 | 4,860 | 0 | 0 | 934 | 24.30M | 1,025.8M |
 | C7_HV_Borrower | 653 | 0 | 0 | 0 | 653 | 0 | 0 |
 | P0_Dormant | 24,570 | 0 | 0 | 0 | 24,570 | 0 | 0 |
 
 ---
 
-## 9. Stress Test va Re-optimization
+## 10. Stress Test va Re-optimization
 
 Engine duoc chay lai MILP rieng cho tung kich ban stress, khong chi tinh lai EMU tren allocation baseline.
 
 | Scenario | COGS | EMU | Expected retained | SMS | Telesales | RM | Incremental ROI |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Baseline | 550.00M | 22.91B | 422.82 | 66,680 | 292 | 101 | 40.66x |
-| Adverse CR/FP re-optimized | 550.00M | 21.96B | 418.54 | 66,680 | 292 | 101 | 38.93x |
-| Budget cut -20% | 440.00M | 18.64B | 314.85 | 44,680 | 292 | 101 | 41.37x |
-| SMS CR -25% | 550.00M | 18.14B | 276.58 | 30,610 | 3,899 | 101 | 31.97x |
+| Baseline | 550.00M | 22.47B | 421.15 | 68,420 | 118 | 101 | 39.86x |
+| Adverse CR/FP re-optimized | 550.00M | 21.67B | 418.87 | 68,420 | 118 | 101 | 38.40x |
+| Budget cut -20% | 440.00M | 18.21B | 313.17 | 46,420 | 118 | 101 | 40.38x |
+| SMS CR -25% | 550.00M | 17.42B | 274.04 | 34,240 | 3,536 | 101 | 30.67x |
 
 Insight: khi SMS conversion giam 25%, chien luoc toi uu moi chuyen bot scale tu SMS sang Telesales, trong khi van giu RM minimum cho cum VIP/high-value. Khi budget bi cat 20%, solver cat bot SMS truoc vi SMS la channel scale linh hoat nhat, con RM/Telesales toi thieu cho nhom gia tri cao van duoc bao toan.
 
 ---
 
-## 10. Output
+## 11. Output
 
 File output chinh:
 
@@ -221,12 +262,13 @@ Output phu:
 ```text
 thresholds_nonib.csv
 thresholds_nonib.md
+optimized_thresholds_nonib.csv
 nonib_retention_cluster_summary.csv
 stress_reoptimized_nonib.csv
 ```
 
 ---
 
-## 11. Ket luan
+## 12. Ket luan
 
-Non-IB engine hien tai da tap trung vao retention, dung churn rate theo cluster, TP co dinh 50M, va allocation bang MILP thay cho heuristic sorting. Sau grid search, Non-IB duoc cap 550M budget va 4,000 human contacts. Baseline dung het budget, tao 422.82 expected retained customers, va dat campaign EMU 22.91 ty VND. C5_HV_Saver duoc dua vao VIP-like clusters nen co FN=-30M va duoc xet RM; allocation toi uu van chon SMS cho C5 trong budget hien tai, con RM duoc phan bo vao C3_Ultra_Saver.
+Non-IB engine hien tai tap trung vao retention, dung churn rate theo cluster, TP co dinh 50M, threshold theo `cluster x channel`, va allocation bang MILP thay cho heuristic sorting. Sau grid search, Non-IB duoc cap 550M budget va 4,000 human contacts. Baseline dung het budget, tao 421.15 expected retained customers, va dat campaign EMU 22.47 ty VND. C5_HV_Saver duoc dua vao VIP-like clusters nen co FN=-30M va duoc xet RM; RM duoc phan bo cho C3_Ultra_Saver va C5_HV_Saver sau khi ap dung top 5% expected-loss threshold.
