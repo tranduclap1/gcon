@@ -60,9 +60,12 @@ gcon/
 │   ├── calculate_thresholds.py        # Break-even threshold per segment × channel
 │   ├── business_kpi_scenarios.py      # CAC, Incremental ROI, P&L, Stress re-optimization
 │   ├── generate_heatmap.py            # Heatmap 4×4 sensitivity analysis (IB)
-│   └── cluster_ib.py                  # IB segmentation rule-based
+│   ├── cluster_ib.py                  # IB segmentation rule-based
+│   │
+│   ├── thresholds.md                  # Break-even threshold kết quả (IB)
+│   ├── thresholds_nonib.md            # Break-even threshold kết quả (Non-IB)
+│   └── persona_onboarding_analysis.md # Phân tích tỷ lệ onboarding theo persona
 │
-├── persona_onboarding_analysis.md     # Phân tích tỷ lệ onboarding thực tế theo persona
 └── README.md
 ```
 
