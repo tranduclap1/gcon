@@ -1,7 +1,7 @@
 {
   "chosen_k": 8,
-  "silhouette_score": 0.6963614533664048,
-  "n_pca_components": 18,
+  "silhouette_score": 0.6820746074528709,
+  "n_pca_components": 15,
   "features_used": [
     "AGE",
     "TENURE_DAYS",
@@ -17,11 +17,8 @@
     "LOAN_TREND",
     "PRODUCT_COUNT",
     "NET_WORTH_PROXY",
-    "MONTHS_WITH_DEPOSIT",
-    "TOTAL_TRANS_COUNT",
-    "External_Outflow_Amount",
-    "Internal_Engagement_Amount"
+    "MONTHS_WITH_DEPOSIT"
   ],
-  "bootstrap_ari_mean": 0.9617737038647363,
+  "bootstrap_ari_mean": 0.9630367966889416,
   "dbscan_noise_count": 0
 }
