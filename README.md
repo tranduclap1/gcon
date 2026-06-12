@@ -1,8 +1,8 @@
-# GCON — G'CONTEST 2026
+# BA QUẢ TÁO — G'CONTEST 2026
 
 > **Ứng dụng Data Analytics xây dựng giải pháp phân tích hành vi khách hàng, cá nhân hóa dịch vụ và ra quyết định tối ưu trong lĩnh vực ngân hàng số**
 
-**Đội thi:** GCON — Nguyễn Tiến Mạnh · Phạm Văn Linh · Trần Đức Lập
+**Đội thi:** BA QUẢ TÁO — Nguyễn Tiến Mạnh · Phạm Văn Linh · Trần Đức Lập
 
 ---
 
