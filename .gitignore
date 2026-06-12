@@ -24,3 +24,14 @@ Thumbs.db
 *.zip
 *.tar.gz
 *.pkl
+
+# Generated output files (re-created by running the scripts)
+heatmap_results.txt
+milp_budget_human_grid_results.md
+gridsearch_normalized_results.md
+
+# Research / scratch scripts (not part of final submission)
+calculate_empirical_ltv.py
+
+# Competition docs (private)
+yêu cầu vòng 3.txt

@@ -217,7 +217,9 @@ def stress_reoptimized():
         solve_nonib_scenario(
             'Adverse CR/FP re-optimized',
             NONIB_BUDGET,
-            cr_multipliers={'SMS': 0.85, 'Telesales': 0.85, 'RM': 0.85},
+            # Đề bài yêu cầu giảm CR Channel 2 (Telesales) và Channel 3 (RM) -15%
+            # SMS (Channel 1) không bị giảm CR theo đề bài
+            cr_multipliers={'Telesales': 0.85, 'RM': 0.85},
             fp_multiplier=1.2,
             min_rm_override=NONIB_STRESS_MIN_RM,
         ),

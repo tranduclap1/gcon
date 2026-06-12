@@ -597,11 +597,11 @@ Diễn giải business:
 
 ## 7. Ý nghĩa kinh doanh
 
-### 8.1 Từ prediction sang decision
+### 7.1 Từ prediction sang decision
 
 Điểm mạnh của giải pháp là không dùng model score như một bảng xếp hạng đơn giản. Score được đưa vào utility function, sau đó qua MILP để tạo allocation có thể triển khai. Cách làm này gần với vận hành thực tế hơn vì mọi ngân hàng đều có giới hạn ngân sách, nhân sự và channel.
 
-### 8.2 Cá nhân hóa theo giá trị và rủi ro
+### 7.2 Cá nhân hóa theo giá trị và rủi ro
 
 Khách không được đối xử giống nhau:
 
@@ -610,11 +610,11 @@ Khách không được đối xử giống nhau:
 - Khách population lớn nhưng risk vừa phải được tiếp cận bằng SMS để tối ưu scale.
 - RM được dành cho cụm có giá trị/rủi ro cao và có yêu cầu business coverage.
 
-### 8.3 Giảm lãng phí chiến dịch
+### 7.3 Giảm lãng phí chiến dịch
 
 Engine có cơ chế auto-brake: nếu EMU của một channel không dương, khách không được allocate vào channel đó. Điều này giúp tránh việc gửi chiến dịch đại trà gây tốn chi phí và giảm trải nghiệm khách hàng.
 
-### 8.4 Minh bạch và giải thích được
+### 7.4 Minh bạch và giải thích được
 
 Mỗi quyết định có thể giải thích bằng:
 
@@ -630,21 +630,21 @@ Mỗi quyết định có thể giải thích bằng:
 
 ## 8. Khuyến nghị triển khai
 
-### 9.1 Cho IB
+### 8.1 Cho IB
 
 - Dùng Telesales làm kênh human-touch chủ lực cho các khách có propensity cao.
 - Duy trì SMS cho nhóm có EMU dương nhưng không cần human-touch.
 - Giới hạn RM cho khách VIP có expected value rất cao để tránh ăn mòn budget.
 - Theo dõi actual conversion theo segment để cập nhật lại CR trong EMU.
 
-### 9.2 Cho Non-IB
+### 8.2 Cho Non-IB
 
 - Ưu tiên retention trước activation với khách Non-IB at-risk.
 - Tập trung RM/Telesales vào `C3_Ultra_Saver`, vì đây là cụm có churn risk cao và giá trị giữ chân lớn.
 - Dùng SMS cho `C0_Traditional`, `C5_HV_Saver`, `C6_Stable_Senior` để tối ưu scale.
 - Tách riêng runoff và hard churn trong dashboard vận hành để tránh phản ứng quá mức với biến động tiền gửi ngắn hạn.
 
-### 9.3 Cho quản trị mô hình
+### 8.3 Cho quản trị mô hình
 
 - Cập nhật conversion rate và cost mỗi tháng/quý dựa trên kết quả thực chiến.
 - Theo dõi EMU realized so với EMU expected.
