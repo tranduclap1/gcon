@@ -12,7 +12,6 @@ warnings.filterwarnings('ignore')
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 BUDGET_LIMIT = 550_000_000
 HUMAN_CAP = 4_000
-MIN_RM_ALLOCATIONS = 101
 TP_RETENTION = 50_000_000
 FP_CONTACT = -50_000
 RUNOFF_WEIGHT = 0.30
@@ -237,7 +236,6 @@ def solve_retention_allocation(df, threshold_by_segment_channel):
         BUDGET_LIMIT,
         np.array([0, 1, 1]),
         HUMAN_CAP,
-        min_channel_counts=np.array([0, 0, MIN_RM_ALLOCATIONS]),
         max_group_channel_counts=eligible_counts,
         nested_group_channel_counts=eligible_counts,
     )
