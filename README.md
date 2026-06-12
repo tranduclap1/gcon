@@ -82,7 +82,7 @@ gcon/
 | `Data_Transaction.csv` | Giao dịch e-banking chi tiết | 1,417,982 |
 | `Data_Activity.csv` | Hoạt động đăng nhập & sử dụng app | 1,048,575 |
 
-> Dữ liệu được cung cấp bởi BTC G'CONTEST 2026 và thuộc quyền bảo mật. Không chia sẻ ra ngoài.
+
 
 ---
 
