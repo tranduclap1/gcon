@@ -24,6 +24,7 @@ Thumbs.db
 *.zip
 *.tar.gz
 *.pkl
+*.joblib
 
 # Generated output files (re-created by running the scripts)
 heatmap_results.txt
